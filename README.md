@@ -11,6 +11,9 @@ Welcome to Toyni! This is an implementation of a STARK (Scalable Transparent Arg
 Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)
 
 
+> [!WARNING]  
+> This is a research project and hasn't been audited. Use at your own risk.
+
 ## 0. Background, STARK Verifier: Constraint vs FRI Layer Checks
 
 ## ✅ Constraint Check (Single Layer)
