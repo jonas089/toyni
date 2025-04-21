@@ -233,51 +233,74 @@ The codebase is organized into logical components:
 | • Transition constraints | • Low-degree testing | • Polynomial arithmetic |
 | • Boundary constraints | • Interactive verification | • Field operations |
 | • Quotient verification | • FRI folding layers | • Domain operations |
+| • Merkle commitments | • Folding consistency checks | • Secure commitments |
 
 ### 9. Missing Components
 
-| Zero-Knowledge | Merkle Commitments | Fiat-Shamir Transform |
-|----------------|-------------------|----------------------|
-| • Trace privacy | • Tree structure | • Deterministic hashing |
-| • State protection | • Proof generation | • Non-interactive |
+| Zero-Knowledge | Fiat-Shamir Transform | Performance |
+|----------------|----------------------|-------------|
+| • Trace privacy | • Deterministic hashing | • Parallel processing |
+| • State protection | • Non-interactive proofs | • Batch verification |
+| • Circuit-specific | • Secure randomness | • Optimized FRI |
 
-While we have a working STARK implementation with quotient polynomial verification, it's not yet a full zero-knowledge system. The main limitations are:
+While we have a working STARK implementation with quotient polynomial verification and FRI folding, there are still some components to implement:
 
-1. We're using random number generation instead of the Fiat-Shamir transform, making the protocol interactive.
-2. The proof system lacks Merkle commitments for the FRI layers, which are essential for zero-knowledge properties. - instead all evaluations are passed to the verifier. This will be addressed soon.
+1. **Fiat-Shamir Transform**: Currently using random number generation instead of deterministic hashing, making the protocol interactive.
+2. **Performance Optimizations**: Need to implement parallel processing and batch verification for better scalability.
+3. **Circuit-Specific Features**: Add support for specialized circuits and optimizations.
 
-To achieve full zero-knowledge capabilities, we need to:
-- Implement Merkle tree commitments for the FRI layers
-- Replace random number generation with deterministic hashing (Fiat-Shamir transform)
-- Add trace blinding and random masks to the composition polynomial
-- Optimize the proof generation and verification process
+### 10. Roadmap
 
-### 10. Next Steps
+#### Completed Features ✅
+- Basic STARK implementation with constraint checks
+- FRI protocol with folding layers
+- Merkle commitments for FRI layers
+- Folding consistency verification
+- Interactive verification protocol
 
-1. **Merkle Commitments**
-   - Implement Merkle tree structure for FRI layers
-   - Add commitment verification in the FRI protocol
-   - Optimize commitment size and verification time
+#### In Progress 🚧
+- Fiat-Shamir transform implementation
+- Performance optimizations
+- Circuit-specific optimizations
 
-2. **Fiat-Shamir Transform**
-   - Replace random number generation with deterministic hashing
-   - Implement transcript-based challenge generation
-   - Ensure security properties of the transform
+#### Future Work 📅
+- Zero-knowledge enhancements
+- Parallel processing support
+- Batch verification
+- Circuit-specific optimizations
+- Documentation improvements
 
-3. **Constraint System Improvements**
-   - Add higher-level abstractions for constraint definition
-   - Implement more complex constraint types
-   - Optimize constraint evaluation
+### 11. Security Properties
 
-4. **Zero-Knowledge Properties**
-   - Add trace blinding
-   - Implement random masks for the composition polynomial
-   - Ensure privacy of witness data
+STARKs achieve their security through a combination of domain extension, low-degree testing, and Merkle commitments. Here's how it works:
 
-5. **Random Linear Combinations**
-   - Add random linear combinations to the constraint polynomial
+| Domain Extension | Low-Degree Testing | Merkle Commitments |
+|-----------------|-------------------|-------------------|
+| • Extend domain | • FRI protocol | • Tree structure |
+| • Blowup factor | • Polynomial degree | • Proof generation |
+| • Soundness | • Folding checks | • Commitment verification |
 
-## 11. Contributing
+The security of a STARK proof relies on three key mechanisms:
+
+1. **Domain Extension (Blowup)**: The composition polynomial is evaluated over a domain that's `b` times larger than the original trace length.
+
+2. **Low-Degree Testing**: The FRI protocol ensures that the polynomial being tested is close to a valid low-degree polynomial, with folding consistency checks at each layer.
+
+3. **Merkle Commitments**: Each FRI layer is committed using a Merkle tree, ensuring the integrity of the folding process and enabling efficient verification.
+
+The soundness error (probability of accepting an invalid proof) is bounded by:
+
+```
+Pr[undetected cheat] = (1/b)^q
+```
+
+where:
+- `b` is the blowup factor (e.g., 8 in our example)
+- `q` is the number of queries made by the verifier
+
+This means that if a prover tries to cheat by modifying a fraction 1/b of the domain, the verifier will detect this with probability at least 1 - (1/b)^q. For example, with a blowup factor of 8 and 10 queries, the soundness error is at most (1/8)^10 ≈ 0.0000001.
+
+## 12. Contributing
 
 We welcome contributions to Toyni! Our current focus is on implementing zero-knowledge properties and improving the overall system. We're particularly interested in:
 
@@ -286,7 +309,7 @@ We welcome contributions to Toyni! Our current focus is on implementing zero-kno
 3. Improving documentation and adding more examples
 4. Optimizing performance and reducing proof sizes
 
-# 12. Associated With
+# 13. Associated With
 
 <div align="center">
 
