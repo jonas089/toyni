@@ -218,34 +218,10 @@ mod tests {
         // Create composition polynomial
         let comp_poly = CompositionPolynomial::new(&trace, &constraints, domain);
 
-        // Print trace values
-        println!("Trace values:");
-        for i in 0..trace.height {
-            let column = trace.get_column(i);
-            println!("x[{}] = {}", i, column.get("x").unwrap());
-        }
-
-        // Print constraint evaluations
-        println!("\nConstraint evaluations:");
-        for i in 0..trace.height - 1 {
-            let current_row = trace.get_column(i);
-            let next_row = trace.get_column(i + 1);
-            let x_current = current_row.get("x").unwrap();
-            let x_next = next_row.get("x").unwrap();
-            let eval = Fr::from(*x_next) - Fr::from(*x_current + 1);
-            println!("C[{}] = {}", i, eval);
-        }
-
-        // Print composition polynomial evaluations
-        println!("\nComposition polynomial evaluations:");
-        let evals = comp_poly.evaluations();
-        for (i, eval) in evals.iter().enumerate() {
-            println!("H[{}] = {}", i, eval);
-        }
-
         // The composition polynomial should evaluate to zero at all points where:
         // 1. The trace values are correct (x[n] = n)
         // 2. The constraints are satisfied (x[n] = x[n-1] + 1)
+        let evals = comp_poly.evaluations();
         for eval in evals {
             assert!(eval.is_zero());
         }
