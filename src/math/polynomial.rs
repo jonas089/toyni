@@ -1,9 +1,10 @@
 //! Basic polynomial operations over finite fields.
 
 use ark_bls12_381::Fr;
-use ark_ff::Zero;
+use ark_ff::{Zero, UniformRand};
 use ark_poly::univariate::DensePolynomial;
 use std::fmt;
+use rand;
 
 #[derive(Debug, Clone)]
 /// Polynomial with finite field coefficients.
@@ -209,6 +210,37 @@ impl Polynomial {
     /// A polynomial representing zero
     pub fn zero() -> Self {
         Self::new(vec![Fr::zero()])
+    }
+
+    /// Creates a random polynomial of given degree.
+    ///
+    /// # Arguments
+    ///
+    /// * `degree` - The degree of the polynomial to generate
+    /// * `rng` - Random number generator
+    ///
+    /// # Returns
+    ///
+    /// A new random polynomial
+    pub fn random(degree: usize, rng: &mut impl rand::Rng) -> Self {
+        let mut coefficients = Vec::with_capacity(degree + 1);
+        for _ in 0..=degree {
+            coefficients.push(Fr::rand(rng));
+        }
+        Self::new(coefficients)
+    }
+
+    /// Multiplies two polynomials.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The polynomial to multiply by
+    ///
+    /// # Returns
+    ///
+    /// The product of the two polynomials
+    pub fn mul(&self, other: &Self) -> Self {
+        self.multiply(other)
     }
 
     /// Returns polynomial coefficients.
