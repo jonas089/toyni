@@ -94,19 +94,7 @@ mod tests {
         }
         execution_trace
     }
-
-    #[test]
-    fn print_test_trace() {
-        let execution_trace = generate_test_trace();
-        execution_trace.print_trace(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
-            "e".to_string(),
-        ]);
-    }
-
+    
     #[test]
     fn test_interpolation() {
         let execution_trace = generate_test_trace();

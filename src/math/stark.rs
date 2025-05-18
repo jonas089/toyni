@@ -101,62 +101,36 @@ impl<'a> StarkProver<'a> {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 2).unwrap();
 
-        println!("\n=== Prover Debug ===");
-        println!("Trace length: {}", trace_len);
-        println!("Extended domain size: {}", extended_domain.size());
-
         // Interpolate all constraints into polynomials
         let constraint_polys = self.constraints.interpolate_all_constraints(self.trace);
-        println!("\nConstraint polynomials:");
-        for (i, poly) in constraint_polys.iter().enumerate() {
-            println!("Constraint {}: {:?}", i, poly.coefficients);
-        }
 
         // Combine all constraints into a single polynomial
-        let combined_constraint = constraint_polys
-            .iter()
-            .fold(ToyniPolynomial::zero(), |acc, p| acc.add(p));
-        println!(
-            "\nCombined constraint: {:?}",
-            combined_constraint.coefficients
-        );
+        let mut combined_constraint = ToyniPolynomial::zero();
+        for poly in constraint_polys {
+            combined_constraint = combined_constraint.add(&poly);
+        }
 
         // Evaluate combined constraint over extended domain
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| combined_constraint.evaluate(x))
             .collect();
-        println!("\nConstraint evaluations at domain points:");
-        for (i, eval) in c_evals.iter().enumerate() {
-            println!("C[{}] = {:?}", i, eval);
-        }
 
         // Interpolate constraint polynomial from evaluations
         let c_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&c_evals));
         let c_poly = ToyniPolynomial::from_dense_poly(c_poly);
-        println!(
-            "\nInterpolated constraint polynomial: {:?}",
-            c_poly.coefficients
-        );
 
         // Create vanishing polynomial
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        println!("\nVanishing polynomial: {:?}", z_poly.coefficients);
 
         // Divide to get quotient polynomial
-        let (quotient_poly, rem) = c_poly.divide(&z_poly).unwrap();
-        println!("\nQuotient polynomial: {:?}", quotient_poly.coefficients);
-        println!("Remainder polynomial: {:?}", rem.coefficients);
+        let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
 
         // Evaluate quotient polynomial over extended domain
         let mut q_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| quotient_poly.evaluate(x))
             .collect();
-        println!("\nQuotient evaluations at domain points:");
-        for (i, eval) in q_evals.iter().enumerate() {
-            println!("Q[{}] = {:?}", i, eval);
-        }
 
         // Perform FRI folding with Merkle commitments
         let mut fri_layers = vec![q_evals.clone()];
@@ -260,10 +234,6 @@ impl<'a> StarkVerifier<'a> {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 2).unwrap();
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
-        println!("\n=== Verifier Debug ===");
-        println!("Trace length: {}", self.trace_len);
-        println!("Extended domain size: {}", extended_domain.size());
-
         // FRI folding consistency check with Merkle proof verification
         let mut current_layer = &proof.quotient_eval_domain;
         for (i, ((beta, next_layer), merkle_tree)) in proof
@@ -299,7 +269,7 @@ impl<'a> StarkVerifier<'a> {
 
                 // Verify the value is properly committed in the Merkle tree
                 let value_bytes = actual_next.into_bigint().to_bytes_be();
-                if !verify_merkle_proof(&value_bytes, &proof, &root) {
+                if !verify_merkle_proof(value_bytes, &proof, &root) {
                     println!(
                         "❌ Merkle proof verification failed at layer {}, position {}",
                         i, j
@@ -311,7 +281,7 @@ impl<'a> StarkVerifier<'a> {
         }
 
         // Verify constraint satisfaction at random points
-        for i in proof.verifier_random_challenges.iter() {
+        for _i in proof.verifier_random_challenges.iter() {
             let random_interactive_challenge =
                 extended_domain.element(rand::random::<usize>() % extended_domain.size());
             let q_eval = proof.quotient_poly.evaluate(random_interactive_challenge);
@@ -319,13 +289,6 @@ impl<'a> StarkVerifier<'a> {
             let c_eval = proof
                 .combined_constraint
                 .evaluate(random_interactive_challenge);
-
-            println!("\nSpot check {}:", i);
-            println!("x₀ = {:?}", random_interactive_challenge);
-            println!("Q(x₀) = {:?}", q_eval);
-            println!("Z(x₀) = {:?}", z_eval);
-            println!("C(x₀) = {:?}", c_eval);
-            println!("Q(x₀) * Z(x₀) = {:?}", q_eval * z_eval);
 
             if q_eval * z_eval != c_eval {
                 println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");

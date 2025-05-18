@@ -37,8 +37,8 @@ impl MerkleTree {
                 };
 
                 let mut combined = Vec::new();
-                combined.extend_from_slice(&left);
-                combined.extend_from_slice(&right);
+                combined.extend_from_slice(left);
+                combined.extend_from_slice(right);
                 next_level.push(sha_digest(&combined));
             }
             current_level = next_level;
@@ -83,7 +83,7 @@ impl MerkleTree {
     }
 }
 
-pub fn verify_merkle_proof(leaf: &Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
+pub fn verify_merkle_proof(leaf:  Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
     let mut current_hash = leaf.clone();
 
     for (sibling, is_right) in proof.path.iter().zip(proof.position.iter()) {
@@ -128,7 +128,7 @@ mod tests {
         for i in 0..4 {
             let proof = tree.get_proof(i).unwrap();
             let leaf = sha_digest(&(i as u64 + 1).to_le_bytes());
-            assert!(verify_merkle_proof(&leaf, &proof, &root));
+            assert!(verify_merkle_proof(leaf, &proof, &root));
         }
     }
 
@@ -148,7 +148,7 @@ mod tests {
         for i in 0..3 {
             let proof = tree.get_proof(i).unwrap();
             let leaf = sha_digest(&(i as u64 + 1).to_le_bytes());
-            assert!(verify_merkle_proof(&leaf, &proof, &root));
+            assert!(verify_merkle_proof(leaf, &proof, &root));
         }
     }
 
@@ -161,6 +161,6 @@ mod tests {
 
         let proof = tree.get_proof(0).unwrap();
         let leaf = sha_digest(&1u64.to_le_bytes());
-        assert!(verify_merkle_proof(&leaf, &proof, &root));
+        assert!(verify_merkle_proof(leaf, &proof, &root));
     }
 }
