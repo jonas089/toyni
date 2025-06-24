@@ -315,7 +315,7 @@ We welcome contributions to Toyni! Our current focus is on implementing zero-kno
 
 | <a href="https://timewave.computer/"><img src="https://timewave.computer/assets/logo.png" width="80" height="80" alt="Timwave Computer"></a> | <a href="https://ciphercurve.com"><img src="https://ciphercurve.com/logo02.png" width="200" height="50" alt="Ciphercurve"></a> |
 |:---:|:---:|
-| [Timwave Computer](https://timewave.computer/) | [Ciphercurve](https://ciphercurve.com) |
+| [Ciphercurve](https://ciphercurve.com) |
 
 </div>
 
