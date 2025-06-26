@@ -322,7 +322,7 @@ We welcome contributions to Toyni! Our current focus is on implementing zero-kno
 ---
 
 <div align="center">
-  <h3>2025 Ciphercurve, Timewave Computer</h3>
+  <h3>2025 Ciphercurve</h3>
   <p><em>Building the future of privacy-preserving computation</em></p>
 </div>
 
