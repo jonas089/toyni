@@ -49,7 +49,7 @@ impl<'a> StarkVerifier<'a> {
     /// `true` if the proof is valid, `false` otherwise
     pub fn verify(&self, proof: &StarkProof) -> bool {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 2).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
         // FRI folding consistency check with Merkle proof verification
