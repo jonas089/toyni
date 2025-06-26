@@ -234,14 +234,14 @@ The codebase is organized into logical components:
 | • Boundary constraints | • Interactive verification | • Field operations |
 | • Quotient verification | • FRI folding layers | • Domain operations |
 | • Merkle commitments | • Folding consistency checks | • Secure commitments |
+| • Trace Privacy | | |
 
 ### 9. Missing Components
 
 | Zero-Knowledge | Fiat-Shamir Transform | Performance |
 |----------------|----------------------|-------------|
-| • Trace privacy | • Deterministic hashing | • Parallel processing |
-| • State protection | • Non-interactive proofs | • Batch verification |
-| • Circuit-specific | • Secure randomness | • Optimized FRI |
+| • Deterministic hashing | • GPU Acceleration | • IFFT for interpolation |
+| • State protection | • Non-interactive proofs | • No dependency on arkworks |
 
 While we have a working STARK implementation with quotient polynomial verification and FRI folding, there are still some components to implement:
 
@@ -322,7 +322,7 @@ We welcome contributions to Toyni! Our current focus is on implementing zero-kno
 ---
 
 <div align="center">
-  <h3>2025 Ciphercurve, Timewave Computer</h3>
+  <h3>2025 Ciphercurve</h3>
   <p><em>Building the future of privacy-preserving computation</em></p>
 </div>
 
