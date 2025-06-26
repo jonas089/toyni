@@ -101,7 +101,7 @@ impl<'a> StarkProver<'a> {
     pub fn generate_proof(&self) -> StarkProof {
         let trace_len = self.trace.height as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 2).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
         // Interpolate all constraints into polynomials
         let constraint_polys = self.constraints.interpolate_all_constraints(self.trace);

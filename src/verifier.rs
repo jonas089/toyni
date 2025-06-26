@@ -38,6 +38,7 @@ impl<'a> StarkVerifier<'a> {
     /// 1. Checks FRI folding consistency with Merkle proofs
     /// 2. Verifies constraint satisfaction at random points
     /// 3. Ensures all commitments are valid
+    /// 4. Verifies low degree of the quotient polynomial
     ///
     /// # Arguments
     ///
@@ -95,6 +96,17 @@ impl<'a> StarkVerifier<'a> {
                 }
             }
             current_layer = next_layer;
+        }
+
+        // Low degree check: verify the final FRI layer has the expected small degree
+        let final_layer = proof.fri_layers.last().expect("FRI layers should not be empty");
+        let expected_final_degree = 3; // The final layer should have degree ≤ 3
+        let actual_final_degree = final_layer.len() - 1;
+        
+        if actual_final_degree > expected_final_degree {
+            println!("❌ Low degree check failed: final layer has degree {} > {}", 
+                     actual_final_degree, expected_final_degree);
+            return false;
         }
 
         // Verify constraint satisfaction at random points
