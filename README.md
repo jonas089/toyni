@@ -145,8 +145,8 @@ At its heart, Toyni consists of three main components working together:
 
 | Virtual Machine | Constraint System | STARK Prover |
 |----------------|-------------------|--------------|
-| • Executes programs | • Defines rules | • Generates proofs |
-| • Creates traces | • Validates states | • Uses FRI protocol |
+| •  | • Defines rules | • Generates proofs |
+| • | • Validates states | • Uses FRI protocol |
 
 ### FRI Layer Scaling
 
