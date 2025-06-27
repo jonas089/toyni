@@ -307,10 +307,18 @@ mod tests {
             &proof.folding_commitment_trees,
         );
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace.height as usize * 8).unwrap();
+        
+        // Calculate the same number of queries as the prover
+        let total_fri_layers = proof.fri_layers.len();
+        let log_l = (total_fri_layers as f64).log2();
+        let optimal_queries = (log_l + 128.0).ceil() as usize;
+        let constraint_queries = 64; // MIN_VERIFIER_QUERIES
+        let total_queries = optimal_queries + constraint_queries;
+        
         let verifier_random_challenges = generate_spot_check_challenges(
             &proof_transcript,
             &extended_domain,
-            80,
+            total_queries,
         );
         assert_eq!(proof.verifier_random_challenges, verifier_random_challenges);
     }

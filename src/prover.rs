@@ -31,8 +31,18 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use rand::thread_rng;
 
+/// Calculate the optimal number of queries for 128-bit security
+/// Based on the formula: m ≥ log₂(L) + 128
+/// where L is the number of FRI layers
+fn calculate_optimal_queries(fri_layers: usize) -> usize {
+    let log_l = (fri_layers as f64).log2();
+    let optimal_queries = log_l + 128.0;
+    optimal_queries.ceil() as usize
+}
+
 /// Number of random challenges for verifier spot checks
-const VERIFIER_QUERIES: usize = 80;
+/// This will be calculated dynamically based on FRI layers for 128-bit security
+const MIN_VERIFIER_QUERIES: usize = 64; // Minimum for constraint checks
 
 /// Builds a transcript for Fiat-Shamir challenge generation
 pub fn build_proof_transcript(
@@ -216,6 +226,18 @@ impl StarkProver {
             fri_layers.push(q_evals.clone());
         }
 
+        // Calculate optimal number of queries for 128-bit security
+        let total_fri_layers = fri_layers.len();
+        let optimal_queries = calculate_optimal_queries(total_fri_layers);
+        let constraint_queries = MIN_VERIFIER_QUERIES;
+        let total_queries = optimal_queries + constraint_queries;
+
+        println!("🔐 Security Parameters:");
+        println!("  FRI layers: {}", total_fri_layers);
+        println!("  Optimal FRI queries for 128-bit: {}", optimal_queries);
+        println!("  Constraint queries: {}", constraint_queries);
+        println!("  Total queries: {}", total_queries);
+
         // Generate random challenges for verification
         let proof_transcript = build_proof_transcript(
             &q_evals,
@@ -227,7 +249,7 @@ impl StarkProver {
         let verifier_random_challenges = generate_spot_check_challenges(
             &proof_transcript,
             &extended_domain,
-            VERIFIER_QUERIES,
+            total_queries,
         );
 
         StarkProof {
