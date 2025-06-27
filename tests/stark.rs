@@ -297,8 +297,6 @@ mod tests {
 
         let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
-        println!("Prover FRI challenges: {:?}", proof.fri_challenges);
-        println!("Prover spot-check challenges: {:?}", proof.verifier_random_challenges);
 
         // Reconstruct the verifier's challenges using the same transcript logic
         let proof_transcript = build_proof_transcript(

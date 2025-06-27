@@ -78,9 +78,18 @@ This involves carefully choosing parameters for:
 - Constraint checks (`Q(x)` evaluations)
 - FRI protocol (number of layers and queries per layer)
 
-> Example:
-> - If `L = 20` layers → `log₂(20) ≈ 4.3`
-> - Then: `m ≈ 133` queries per layer
+**Important**: The number of FRI layers depends on the program size!
+
+> Example for different program sizes:
+> - Trace size N=4: Extended domain = 32 → L = 4 layers → log₂(4) ≈ 2
+> - Trace size N=8: Extended domain = 64 → L = 5 layers → log₂(5) ≈ 2.3  
+> - Trace size N=16: Extended domain = 128 → L = 6 layers → log₂(6) ≈ 2.6
+> - Trace size N=32: Extended domain = 256 → L = 7 layers → log₂(7) ≈ 2.8
+> - Trace size N=1024: Extended domain = 8192 → L = 11 layers → log₂(11) ≈ 3.5
+>
+> **Formula**: FRI layers = log₂(8N) - 2, where N is trace size
+> **Required queries**: m ≥ log₂(L) + 128 (e.g., 131-132 for most programs)
+
 ---
 
 ### CONSTRAINT CHECKS
@@ -100,9 +109,11 @@ Use `n = 64–80` spot checks for strong 128-bit soundness across typical domain
 | Component              | Suggested Value                    |
 |-----------------------|------------------------------------|
 | Constraint checks `n` | 64–80                              |
-| FRI layers `L`        | log₂(N / degree of final poly)     |
-| FRI queries `m`       | ≥ log₂(L) + 128 (e.g., 133)        |
+| FRI layers `L`        | log₂(8N) - 2 (where N = trace size) |
+| FRI queries `m`       | ≥ log₂(L) + 128 (e.g., 131-132)     |
 | Total soundness error | ε_total = ε_constraints + ε_fri ≤ 2⁻¹²⁸ |
+
+**Note**: Our implementation uses a conservative approach by checking ALL points in each FRI layer rather than sampling, providing security well above the minimum requirements.
 
 ## 🔁 Summary
 
@@ -141,6 +152,23 @@ At its heart, Toyni consists of three main components working together:
 |----------------|-------------------|--------------|
 | • Executes programs | • Defines rules | • Generates proofs |
 | • Creates traces | • Validates states | • Uses FRI protocol |
+
+### FRI Layer Scaling
+
+The number of FRI layers in a STARK proof scales logarithmically with the program size:
+
+```
+FRI Layers = log₂(8N) - 2
+```
+
+Where `N` is the trace size (number of execution steps). This scaling ensures that:
+
+- **Small programs** (N=4): 4 FRI layers
+- **Medium programs** (N=32): 7 FRI layers  
+- **Large programs** (N=1024): 11 FRI layers
+- **Very large programs** (N=65536): 16 FRI layers
+
+This logarithmic scaling is crucial for STARK's efficiency - proof size grows only logarithmically with computation size.
 
 ### 5. How It Works
 
@@ -198,9 +226,9 @@ STARKs achieve their security through a combination of domain extension and low-
 
 The security of a STARK proof relies on two key mechanisms:
 
-1. **Domain Extension (Blowup)**: The composition polynomial is evaluated over a domain that's `b` times larger than the original trace length, where `b` is the blowup factor.
+1. **Domain Extension (Blowup)**: The composition polynomial is evaluated over a domain that's `b` times larger than the original trace length, where `b` is the blowup factor (8 in our implementation).
 
-2. **Low-Degree Testing**: The FRI protocol ensures that the polynomial being tested is close to a valid low-degree polynomial.
+2. **Low-Degree Testing**: The FRI protocol ensures that the polynomial being tested is close to a valid low-degree polynomial. The number of FRI layers scales logarithmically with program size: `L = log₂(8N) - 2` where N is the trace size.
 
 The soundness error (probability of accepting an invalid proof) is bounded by:
 
@@ -209,10 +237,12 @@ Pr[undetected cheat] = (1/b)^q
 ```
 
 where:
-- `b` is the blowup factor (e.g., 8 in our example)
+- `b` is the blowup factor (8 in our implementation)
 - `q` is the number of queries made by the verifier
 
-This means that if a prover tries to cheat by modifying a fraction 1/b of the domain, the verifier will detect this with probability at least 1 - (1/b)^q. For example, with a blowup factor of 8 and 10 queries, the soundness error is at most (1/8)^10 ≈ 0.0000001.
+This means that if a prover tries to cheat by modifying a fraction 1/b of the domain, the verifier will detect this with probability at least 1 - (1/b)^q. 
+
+**Example**: With a blowup factor of 8 and 80 constraint queries, the constraint soundness error is at most (1/8)^80 ≈ 2^(-240), providing far more than the required 128-bit security.
 
 ## 7. Project Structure
 
@@ -234,7 +264,9 @@ The codebase is organized into logical components:
 | • Boundary constraints | • Interactive verification | • Field operations |
 | • Quotient verification | • FRI folding layers | • Domain operations |
 | • Merkle commitments | • Folding consistency checks | • Secure commitments |
-| • Trace Privacy | • Fiat Shamir verifier challenges | |
+| • Trace Privacy | • Fiat Shamir verifier challenges | • Conservative FRI verification |
+
+**Security Note**: Our FRI implementation uses a conservative approach by verifying ALL points in each layer rather than sampling, providing security well above the theoretical minimum requirements.
 
 ### 9. Missing Components
 
