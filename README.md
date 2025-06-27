@@ -234,20 +234,19 @@ The codebase is organized into logical components:
 | • Boundary constraints | • Interactive verification | • Field operations |
 | • Quotient verification | • FRI folding layers | • Domain operations |
 | • Merkle commitments | • Folding consistency checks | • Secure commitments |
-| • Trace Privacy | | |
+| • Trace Privacy | • Fiat Shamir verifier challenges | |
 
 ### 9. Missing Components
 
-| Zero-Knowledge | Fiat-Shamir Transform | Performance |
+| Zero-Knowledge | - | Performance |
 |----------------|----------------------|-------------|
 | • Deterministic hashing | • GPU Acceleration | • IFFT for interpolation |
 | • State protection | • Non-interactive proofs | • No dependency on arkworks |
 
 While we have a working STARK implementation with quotient polynomial verification and FRI folding, there are still some components to implement:
 
-1. **Fiat-Shamir Transform**: Currently using random number generation instead of deterministic hashing, making the protocol interactive.
-2. **Performance Optimizations**: Need to implement parallel processing and batch verification for better scalability.
-3. **Circuit-Specific Features**: Add support for specialized circuits and optimizations.
+1. **Performance Optimizations**: Need to implement parallel processing and batch verification for better scalability.
+2. **Circuit-Specific Features**: Add support for specialized circuits and optimizations.
 
 ### 10. Roadmap
 
