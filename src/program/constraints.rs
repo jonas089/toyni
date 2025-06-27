@@ -9,7 +9,7 @@ use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
 use std::collections::HashMap;
 
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
-use crate::vm::trace::{ExecutionTrace, ProgramVariable};
+use crate::program::trace::{ExecutionTrace, ProgramVariable};
 
 /// Type alias for transition constraint evaluation function
 type TransitionEvaluator =
@@ -168,7 +168,7 @@ impl ConstraintSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::trace::ExecutionTrace;
+    use crate::program::trace::ExecutionTrace;
 
     fn create_test_trace() -> ExecutionTrace {
         let mut trace = ExecutionTrace::new(3, 2);

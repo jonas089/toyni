@@ -8,7 +8,7 @@ use ark_poly::{
     EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial, univariate::DensePolynomial,
 };
 
-use crate::vm::{constraints::ConstraintSystem, trace::ExecutionTrace};
+use crate::program::{constraints::ConstraintSystem, trace::ExecutionTrace};
 
 /// Polynomial combining trace and constraints for STARK proofs.
 pub struct CompositionPolynomial {

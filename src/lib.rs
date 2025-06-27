@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 pub mod math;
 pub mod merkle;
-pub mod vm;
+pub mod program;
 pub mod prover;
 pub mod verifier;
 

@@ -22,7 +22,7 @@ use crate::digest_sha2;
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::{MerkleTree};
-use crate::vm::{constraints::ConstraintSystem, trace::ExecutionTrace};
+use crate::program::{constraints::ConstraintSystem, trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ark_poly::DenseUVPolynomial;

@@ -2,7 +2,7 @@
 mod tests {
     use ark_bls12_381::Fr;
     use ark_ff::Field;
-    use toyni::{prover::StarkProver, verifier::StarkVerifier, vm::{constraints::ConstraintSystem, trace::ExecutionTrace}};
+    use toyni::{prover::StarkProver, verifier::StarkVerifier, program::{constraints::ConstraintSystem, trace::ExecutionTrace}};
     use std::collections::HashMap;
     use toyni::prover::build_proof_transcript;
     use ark_poly::domain::GeneralEvaluationDomain;
