@@ -22,10 +22,6 @@ Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.
     Q(x) * Z(x) == C(x)
     ```
   - Ensures that the execution trace satisfies all constraints
-  - **This check is done once per point**
-  - **Not done across layers**
-  - Merkle proof is optional (depends on how C(x) and Q(x) are committed)
-
 ---
 
 ## ✅ FRI Layer Checks (Multiple Layers)
