@@ -180,7 +180,7 @@ fn test_valid_proof() {
 
     let prover = StarkProver::new(&trace, &constraints);
     let proof = prover.generate_proof();
-    let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+    let verifier = StarkVerifier::new(trace.height as usize);
     assert!(verifier.verify(&proof));
 }
 ```

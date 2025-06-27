@@ -2,7 +2,7 @@ use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
-use crate::{math::polynomial::Polynomial, merkle::verify_merkle_proof, prover::StarkProof, vm::constraints::ConstraintSystem};
+use crate::{math::polynomial::Polynomial, merkle::verify_merkle_proof, prover::StarkProof, digest_sha2};
 
 /// STARK verifier component that verifies proofs.
 ///
@@ -10,24 +10,19 @@ use crate::{math::polynomial::Polynomial, merkle::verify_merkle_proof, prover::S
 /// 1. Checks FRI folding consistency with Merkle proofs
 /// 2. Verifies constraint satisfaction at random points
 /// 3. Ensures all commitments are valid
-pub struct StarkVerifier<'a> {
-    /// Constraint system defining program rules
-    #[allow(unused)]
-    constraints: &'a ConstraintSystem,
+pub struct StarkVerifier {
     /// Length of execution trace
     trace_len: usize,
 }
 
-impl<'a> StarkVerifier<'a> {
-    /// Creates a new STARK verifier for the given constraints and trace length.
+impl StarkVerifier {
+    /// Creates a new STARK verifier for the given trace length.
     ///
     /// # Arguments
     ///
-    /// * `constraints` - The constraint system defining program rules
     /// * `trace_len` - The length of the execution trace
-    pub fn new(constraints: &'a ConstraintSystem, trace_len: usize) -> Self {
+    pub fn new(trace_len: usize) -> Self {
         Self {
-            constraints,
             trace_len,
         }
     }
@@ -49,7 +44,7 @@ impl<'a> StarkVerifier<'a> {
     /// `true` if the proof is valid, `false` otherwise
     pub fn verify(&self, proof: &StarkProof) -> bool {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
+        let _extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
         // FRI folding consistency check with Merkle proof verification
@@ -110,9 +105,23 @@ impl<'a> StarkVerifier<'a> {
         }
 
         // Verify constraint satisfaction at random points
-        for _i in proof.verifier_random_challenges.iter() {
-            let random_interactive_challenge =
-                extended_domain.element(rand::random::<usize>() % extended_domain.size());
+        let verifier_transcript = build_verifier_transcript(
+            &proof.quotient_eval_domain,
+            &proof.fri_layers,
+            &proof.fri_challenges,
+            &proof.combined_constraint,
+            &proof.folding_commitment_trees,
+        );
+        let verifier_hash = digest_sha2(&verifier_transcript);
+        
+        for i in 0..proof.verifier_random_challenges.len() {
+            // Generate deterministic challenge using Fiat-Shamir
+            let mut challenge_bytes = [0u8; 32];
+            let hash_offset = (i * 32) % verifier_hash.len();
+            let bytes_to_copy = std::cmp::min(32, verifier_hash.len() - hash_offset);
+            challenge_bytes[..bytes_to_copy].copy_from_slice(&verifier_hash[hash_offset..hash_offset + bytes_to_copy]);
+            let random_interactive_challenge = Fr::from_le_bytes_mod_order(&challenge_bytes);
+            
             let q_eval = proof.quotient_poly.evaluate(random_interactive_challenge);
             let z_eval = z_poly.evaluate(random_interactive_challenge);
             let c_eval = proof
@@ -127,4 +136,46 @@ impl<'a> StarkVerifier<'a> {
 
         true
     }
+}
+
+/// Builds a transcript for Fiat-Shamir challenge generation (verifier side)
+fn build_verifier_transcript(
+    quotient_eval_domain: &[Fr],
+    fri_layers: &[Vec<Fr>],
+    fri_challenges: &[Fr],
+    combined_constraint: &Polynomial,
+    folding_commitment_trees: &[crate::merkle::MerkleTree],
+) -> Vec<u8> {
+    let mut transcript = Vec::new();
+    
+    // Add quotient polynomial evaluations
+    for eval in quotient_eval_domain {
+        transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
+    }
+    
+    // Add FRI layers
+    for layer in fri_layers {
+        for eval in layer {
+            transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
+        }
+    }
+    
+    // Add FRI challenges
+    for challenge in fri_challenges {
+        transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
+    }
+    
+    // Add constraint polynomial coefficients
+    for coeff in combined_constraint.coefficients() {
+        transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
+    }
+    
+    // Add Merkle tree roots
+    for tree in folding_commitment_trees {
+        if let Some(root) = tree.root() {
+            transcript.extend_from_slice(&root);
+        }
+    }
+    
+    transcript
 }

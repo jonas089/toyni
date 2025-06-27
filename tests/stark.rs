@@ -4,6 +4,10 @@ mod tests {
     use ark_ff::Field;
     use toyni::{prover::StarkProver, verifier::StarkVerifier, vm::{constraints::ConstraintSystem, trace::ExecutionTrace}};
     use std::collections::HashMap;
+    use toyni::prover::build_proof_transcript;
+    use ark_poly::domain::GeneralEvaluationDomain;
+    use ark_poly::EvaluationDomain;
+    use toyni::prover::generate_spot_check_challenges;
 
     #[test]
     fn test_valid_proof() {
@@ -33,7 +37,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
     }
 
@@ -65,7 +69,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(!verifier.verify(&proof));
     }
 
@@ -97,7 +101,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
     }
 
@@ -141,7 +145,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
     }
 
@@ -173,7 +177,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
     }
 
@@ -217,7 +221,7 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
     }
 
@@ -261,7 +265,55 @@ mod tests {
 
         let prover = StarkProver::new(&trace, &constraints);
         let proof = prover.generate_proof();
-        let verifier = StarkVerifier::new(&constraints, trace.height as usize);
+        let verifier = StarkVerifier::new(trace.height as usize);
         assert!(!verifier.verify(&proof));
+    }
+
+    #[test]
+    fn test_challenge_consistency() {
+        let mut trace = ExecutionTrace::new(4, 1);
+        for i in 0..4 {
+            let mut row = HashMap::new();
+            row.insert("x".to_string(), i);
+            trace.insert_column(row);
+        }
+
+        let mut constraints = ConstraintSystem::default();
+        constraints.add_transition_constraint(
+            "increment".to_string(),
+            vec!["x".to_string()],
+            Box::new(|current, next| {
+                let x_n = Fr::from(*current.get("x").unwrap());
+                let x_next = Fr::from(*next.get("x").unwrap());
+                x_next - x_n - Fr::ONE
+            }),
+        );
+        constraints.add_boundary_constraint(
+            "starts_at_0".to_string(),
+            0,
+            vec!["x".to_string()],
+            Box::new(|row| Fr::from(*row.get("x").unwrap())),
+        );
+
+        let prover = StarkProver::new(&trace, &constraints);
+        let proof = prover.generate_proof();
+        println!("Prover FRI challenges: {:?}", proof.fri_challenges);
+        println!("Prover spot-check challenges: {:?}", proof.verifier_random_challenges);
+
+        // Reconstruct the verifier's challenges using the same transcript logic
+        let proof_transcript = build_proof_transcript(
+            proof.fri_layers.last().unwrap(),
+            &proof.fri_layers,
+            &proof.fri_challenges,
+            &proof.combined_constraint,
+            &proof.folding_commitment_trees,
+        );
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace.height as usize * 8).unwrap();
+        let verifier_random_challenges = generate_spot_check_challenges(
+            &proof_transcript,
+            &extended_domain,
+            80,
+        );
+        assert_eq!(proof.verifier_random_challenges, verifier_random_challenges);
     }
 }

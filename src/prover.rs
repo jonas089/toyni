@@ -24,7 +24,7 @@ use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::{MerkleTree};
 use crate::vm::{constraints::ConstraintSystem, trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use ark_ff::{BigInteger, PrimeField};
 use ark_poly::DenseUVPolynomial;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial};
 use num_bigint::BigUint;
@@ -33,6 +33,48 @@ use rand::thread_rng;
 
 /// Number of random challenges for verifier spot checks
 const VERIFIER_QUERIES: usize = 80;
+
+/// Builds a transcript for Fiat-Shamir challenge generation
+pub fn build_proof_transcript(
+    quotient_eval_domain: &[Fr],
+    fri_layers: &[Vec<Fr>],
+    fri_challenges: &[Fr],
+    combined_constraint: &ToyniPolynomial,
+    folding_commitment_trees: &[MerkleTree],
+) -> Vec<u8> {
+    let mut transcript = Vec::new();
+    
+    // Add quotient polynomial evaluations
+    for eval in quotient_eval_domain {
+        transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
+    }
+    
+    // Add FRI layers
+    for layer in fri_layers {
+        for eval in layer {
+            transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
+        }
+    }
+    
+    // Add FRI challenges
+    for challenge in fri_challenges {
+        transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
+    }
+    
+    // Add constraint polynomial coefficients
+    for coeff in combined_constraint.coefficients() {
+        transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
+    }
+    
+    // Add Merkle tree roots
+    for tree in folding_commitment_trees {
+        if let Some(root) = tree.root() {
+            transcript.extend_from_slice(&root);
+        }
+    }
+    
+    transcript
+}
 
 /// STARK proof containing all components needed for verification.
 ///
@@ -145,9 +187,20 @@ impl<'a> StarkProver<'a> {
         let mut fri_layers = vec![q_evals.clone()];
         let mut fri_challenges = Vec::new();
         let mut folding_commitment_trees: Vec<MerkleTree> = Vec::new();
+        let mut fri_transcript = Vec::new();
 
         while q_evals.len() > 4 {
-            let beta = Fr::rand(&mut thread_rng());
+            // Add current layer to transcript
+            for eval in &q_evals {
+                fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
+            }
+            
+            // Generate FRI challenge using Fiat-Shamir
+            let fri_hash = digest_sha2(&fri_transcript);
+            let mut beta_bytes = [0u8; 32];
+            beta_bytes.copy_from_slice(&fri_hash[..32]);
+            let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
+            
             fri_challenges.push(beta);
             q_evals = fri_fold(&q_evals, beta);
             
@@ -164,25 +217,18 @@ impl<'a> StarkProver<'a> {
         }
 
         // Generate random challenges for verification
-        let proof_hash = digest_sha2(&[0; 32]);
-        let proof_hash_u32: Vec<u32> = proof_hash
-            .chunks(4)
-            .map(|chunk| {
-                let mut buf = [0u8; 4];
-                buf.copy_from_slice(chunk);
-                u32::from_be_bytes(buf)
-            })
-            .collect();
-        let proof_hash_int = BigUint::from_slice(&proof_hash_u32);
-        let mut verifier_random_challenges = Vec::new();
-
-        for _ in 0..VERIFIER_QUERIES {
-            let verifier_index = proof_hash_int.clone() + BigUint::from(1u32);
-            let verifier_index_field = verifier_index % BigUint::from(extended_domain.size());
-            let random_interactive_challenge =
-                extended_domain.element(verifier_index_field.to_usize().unwrap());
-            verifier_random_challenges.push(random_interactive_challenge);
-        }
+        let proof_transcript = build_proof_transcript(
+            &q_evals,
+            &fri_layers,
+            &fri_challenges,
+            &combined_constraint,
+            &folding_commitment_trees,
+        );
+        let verifier_random_challenges = generate_spot_check_challenges(
+            &proof_transcript,
+            &extended_domain,
+            VERIFIER_QUERIES,
+        );
 
         StarkProof {
             quotient_eval_domain: fri_layers[0].clone(),
@@ -194,4 +240,29 @@ impl<'a> StarkProver<'a> {
             verifier_random_challenges,
         }
     }
+}
+
+pub fn generate_spot_check_challenges(
+    transcript: &[u8],
+    domain: &GeneralEvaluationDomain<Fr>,
+    num_challenges: usize,
+) -> Vec<Fr> {
+    let proof_hash = digest_sha2(transcript);
+    let proof_hash_u32: Vec<u32> = proof_hash
+        .chunks(4)
+        .map(|chunk| {
+            let mut buf = [0u8; 4];
+            buf.copy_from_slice(chunk);
+            u32::from_be_bytes(buf)
+        })
+        .collect();
+    let proof_hash_int = BigUint::from_slice(&proof_hash_u32);
+    let mut challenges = Vec::new();
+    for i in 0..num_challenges {
+        let verifier_index = &proof_hash_int + BigUint::from(i as u32 + 1);
+        let verifier_index_field = verifier_index % BigUint::from(domain.size());
+        let challenge = domain.element(verifier_index_field.to_usize().unwrap());
+        challenges.push(challenge);
+    }
+    challenges
 }
