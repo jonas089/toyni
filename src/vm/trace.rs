@@ -8,6 +8,7 @@ use std::collections::HashMap;
 pub type ProgramVariable = String;
 
 /// Execution trace storing program state changes.
+#[derive(Clone)]
 pub struct ExecutionTrace {
     /// Number of execution steps
     pub height: u64,

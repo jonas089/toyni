@@ -35,7 +35,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
@@ -67,7 +67,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(!verifier.verify(&proof));
@@ -99,7 +99,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
@@ -143,7 +143,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
@@ -175,7 +175,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
@@ -219,7 +219,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(verifier.verify(&proof));
@@ -263,7 +263,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         let verifier = StarkVerifier::new(trace.height as usize);
         assert!(!verifier.verify(&proof));
@@ -295,7 +295,7 @@ mod tests {
             Box::new(|row| Fr::from(*row.get("x").unwrap())),
         );
 
-        let prover = StarkProver::new(&trace, &constraints);
+        let prover = StarkProver::new(trace.clone(), constraints);
         let proof = prover.generate_proof();
         println!("Prover FRI challenges: {:?}", proof.fri_challenges);
         println!("Prover spot-check challenges: {:?}", proof.verifier_random_challenges);

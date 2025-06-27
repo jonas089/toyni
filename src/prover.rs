@@ -108,21 +108,21 @@ pub struct StarkProof {
 /// 2. Constructs the composition polynomial
 /// 3. Performs FRI folding with Merkle commitments
 /// 4. Generates random challenges for verification
-pub struct StarkProver<'a> {
+pub struct StarkProver {
     /// Execution trace to prove
-    trace: &'a ExecutionTrace,
+    trace: ExecutionTrace,
     /// Constraint system defining program rules
-    constraints: &'a ConstraintSystem,
+    constraints: ConstraintSystem,
 }
 
-impl<'a> StarkProver<'a> {
+impl StarkProver {
     /// Creates a new STARK prover for the given trace and constraints.
     ///
     /// # Arguments
     ///
     /// * `trace` - The execution trace to prove
     /// * `constraints` - The constraint system defining program rules
-    pub fn new(trace: &'a ExecutionTrace, constraints: &'a ConstraintSystem) -> Self {
+    pub fn new(trace: ExecutionTrace, constraints: ConstraintSystem) -> Self {
         Self { trace, constraints }
     }
 
@@ -146,7 +146,7 @@ impl<'a> StarkProver<'a> {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
         // Interpolate all constraints into polynomials
-        let constraint_polys = self.constraints.interpolate_all_constraints(self.trace);
+        let constraint_polys = self.constraints.interpolate_all_constraints(&self.trace);
 
         // Combine all constraints into a single polynomial
         let mut combined_constraint = ToyniPolynomial::zero();
