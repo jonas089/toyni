@@ -161,13 +161,13 @@ fn test_valid_proof() {
         trace.insert_column(row);
     }
 
-    let mut constraints = ConstraintSystem::new();
+    let mut constraints = ConstraintSystem::default();
     constraints.add_transition_constraint(
         "increment".to_string(),
         vec!["x".to_string()],
         Box::new(|current, next| {
-            let x_n = Fr::from(*current.get("x").unwrap() as u64);
-            let x_next = Fr::from(*next.get("x").unwrap() as u64);
+            let x_n = Fr::from(*current.get("x").unwrap());
+            let x_next = Fr::from(*next.get("x").unwrap());
             x_next - x_n - Fr::ONE
         }),
     );
@@ -175,10 +175,10 @@ fn test_valid_proof() {
         "starts_at_0".to_string(),
         0,
         vec!["x".to_string()],
-        Box::new(|row| Fr::from(*row.get("x").unwrap() as u64)),
+        Box::new(|row| Fr::from(*row.get("x").unwrap())),
     );
 
-    let prover = StarkProver::new(&trace, &constraints);
+    let prover = StarkProver::new(trace.clone(), constraints);
     let proof = prover.generate_proof();
     let verifier = StarkVerifier::new(trace.height as usize);
     assert!(verifier.verify(&proof));
@@ -238,12 +238,12 @@ The codebase is organized into logical components:
 
 ### 9. Missing Components
 
-| Zero-Knowledge | - | Performance |
-|----------------|----------------------|-------------|
-| • Deterministic hashing | • GPU Acceleration | • IFFT for interpolation |
-| • State protection | • Non-interactive proofs | • No dependency on arkworks |
+| Zero-Knowledge | Performance | Optimization |
+|----------------|-------------|--------------|
+| • Enhanced state protection | • GPU Acceleration | • IFFT for interpolation |
+| • Deterministic hashing | • Non-interactive proofs | • No dependency on arkworks |
 
-While we have a working STARK implementation with quotient polynomial verification and FRI folding, there are still some components to implement:
+While we have a working STARK implementation with quotient polynomial verification, FRI folding, and basic zero-knowledge properties, there are still some components to implement:
 
 1. **Performance Optimizations**: Need to implement parallel processing and batch verification for better scalability.
 2. **Circuit-Specific Features**: Add support for specialized circuits and optimizations.
@@ -256,14 +256,15 @@ While we have a working STARK implementation with quotient polynomial verificati
 - Merkle commitments for FRI layers
 - Folding consistency verification
 - Interactive verification protocol
+- Fiat-Shamir transform implementation
+- Zero-knowledge polynomial masking
 
 #### In Progress 🚧
-- Fiat-Shamir transform implementation
 - Performance optimizations
 - Circuit-specific optimizations
 
 #### Future Work 📅
-- Zero-knowledge enhancements
+- Enhanced zero-knowledge properties
 - Parallel processing support
 - Batch verification
 - Circuit-specific optimizations
@@ -301,9 +302,9 @@ This means that if a prover tries to cheat by modifying a fraction 1/b of the do
 
 ## 12. Contributing
 
-We welcome contributions to Toyni! Our current focus is on implementing zero-knowledge properties and improving the overall system. We're particularly interested in:
+We welcome contributions to Toyni! Our current focus is on enhancing zero-knowledge properties and improving the overall system. We're particularly interested in:
 
-1. Implementing Merkle tree commitments and the Fiat-Shamir transform
+1. Enhancing zero-knowledge properties and state protection
 2. Adding comprehensive test coverage and security audits
 3. Improving documentation and adding more examples
 4. Optimizing performance and reducing proof sizes
