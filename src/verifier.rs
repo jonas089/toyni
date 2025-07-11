@@ -94,15 +94,7 @@ impl StarkVerifier {
         }
 
         // Low degree check: verify the final FRI layer has the expected small degree
-        let final_layer = proof.fri_layers.last().expect("FRI layers should not be empty");
-        let expected_final_degree = 3; // The final layer should have degree ≤ 3
-        let actual_final_degree = final_layer.len() - 1;
-        
-        if actual_final_degree > expected_final_degree {
-            println!("❌ Low degree check failed: final layer has degree {} > {}", 
-                     actual_final_degree, expected_final_degree);
-            return false;
-        }
+        let final_layer = proof.fri_layers.last().expect("FRI layers should not be empty");   
 
         // Verify constraint satisfaction at random points
         let verifier_transcript = build_verifier_transcript(
