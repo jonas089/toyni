@@ -12,6 +12,8 @@ Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.
 
 > [!WARNING]  
 > This is a research project and hasn't been audited. Use at your own risk.
+> There are some essential and critical features still missing, especially the
+> trace commitment with merkle proof verifications
 
 ## 0. Background, STARK Verifier: Constraint vs FRI Layer Checks
 
