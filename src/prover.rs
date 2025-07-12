@@ -21,7 +21,7 @@
 use crate::digest_sha2;
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
-use crate::merkle::{MerkleTree};
+use crate::merkle::MerkleTree;
 use crate::program::{constraints::ConstraintSystem, trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
@@ -29,7 +29,7 @@ use ark_poly::DenseUVPolynomial;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial};
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use rand::thread_rng;
+use rand::Rng;
 
 /// Calculate the optimal number of queries for 128-bit security
 /// Based on the formula: m ≥ log₂(L) + 128
@@ -53,36 +53,36 @@ pub fn build_proof_transcript(
     folding_commitment_trees: &[MerkleTree],
 ) -> Vec<u8> {
     let mut transcript = Vec::new();
-    
+
     // Add quotient polynomial evaluations
     for eval in quotient_eval_domain {
         transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
     }
-    
+
     // Add FRI layers
     for layer in fri_layers {
         for eval in layer {
             transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
         }
     }
-    
+
     // Add FRI challenges
     for challenge in fri_challenges {
         transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
     }
-    
+
     // Add constraint polynomial coefficients
     for coeff in combined_constraint.coefficients() {
         transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
     }
-    
+
     // Add Merkle tree roots
     for tree in folding_commitment_trees {
         if let Some(root) = tree.root() {
             transcript.extend_from_slice(&root);
         }
     }
-    
+
     transcript
 }
 
@@ -165,16 +165,16 @@ impl StarkProver {
         }
 
         // Generate random polynomial for zero-knowledge
-        let mut rng = thread_rng();
-        let random_poly = ToyniPolynomial::random(extended_domain.size() - 1, &mut rng);
-        
+        //let mut rng = thread_rng();
+        //let random_poly = ToyniPolynomial::random(extended_domain.size() - 1, &mut rng);
+
         // Multiply combined constraint by random polynomial
-        let masked_constraint = combined_constraint.mul(&random_poly);
+        // let masked_constraint = combined_constraint.mul(&random_poly);
 
         // Evaluate masked constraint over extended domain
         let c_evals: Vec<Fr> = extended_domain
             .elements()
-            .map(|x| masked_constraint.evaluate(x))
+            .map(|x| combined_constraint.evaluate(x))
             .collect();
 
         // Interpolate constraint polynomial from evaluations
@@ -193,6 +193,54 @@ impl StarkProver {
             .map(|x| quotient_poly.evaluate(x))
             .collect();
 
+        // Interpolate trace polynomials for each variable
+        let mut trace_polynomials = Vec::new();
+
+        // Get all variable names from the first column
+        let variable_names: Vec<String> = if let Some(first_column) = self.trace.trace.first() {
+            first_column.keys().cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        for variable_name in &variable_names {
+            // Extract values for this variable across all steps
+            let mut variable_values = Vec::new();
+            for step in 0..self.trace.trace.len() {
+                let column_trace = &self.trace.trace[step];
+                let value = column_trace.get(variable_name).unwrap_or(&0);
+                variable_values.push(Fr::from(*value));
+            }
+            // Create domain points (powers of a generator)
+            let domain = GeneralEvaluationDomain::<Fr>::new(variable_values.len()).unwrap();
+            let domain_points: Vec<Fr> = domain.elements().collect();
+            // Interpolate the polynomial
+            let trace_poly = crate::math::fri::interpolate_poly(&domain_points, &variable_values);
+            let trace_poly = ToyniPolynomial::from_dense_poly(trace_poly);
+            trace_polynomials.push((variable_name.clone(), trace_poly));
+        }
+
+        // simulate verifier check for first column poly
+        // evaluate the first column poly at a random point from the extended domain
+        let mut rng = rand::thread_rng();
+        let random_index = rng.gen_range(0..extended_domain.size());
+        let random_point = extended_domain.element(random_index);
+        let first_column_poly = trace_polynomials[0].1.clone();
+        let first_column_poly_eval = first_column_poly.evaluate(random_point);
+        println!("First column poly eval: {}", first_column_poly_eval);
+
+        // check satisfied
+        let c_eval = combined_constraint.evaluate(first_column_poly_eval);
+        let z_eval = z_poly.evaluate(first_column_poly_eval);
+        let q_eval = quotient_poly.evaluate(first_column_poly_eval);
+        println!("c_eval: {}", c_eval);
+        println!("z_eval: {}", z_eval);
+        println!("q_eval: {}", q_eval);
+        println!("c_eval * z_eval: {}", c_eval * z_eval);
+        println!("q_eval * z_eval: {}", q_eval * z_eval);
+
+        assert_eq!(c_eval, q_eval * z_eval);
+
         // Perform FRI folding with Merkle commitments
         let mut fri_layers = vec![q_evals.clone()];
         let mut fri_challenges = Vec::new();
@@ -204,16 +252,16 @@ impl StarkProver {
             for eval in &q_evals {
                 fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
             }
-            
+
             // Generate FRI challenge using Fiat-Shamir
             let fri_hash = digest_sha2(&fri_transcript);
             let mut beta_bytes = [0u8; 32];
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
-            
+
             fri_challenges.push(beta);
             q_evals = fri_fold(&q_evals, beta);
-            
+
             // Create Merkle tree for this FRI layer
             let folding_step_merkle_tree = MerkleTree::new(
                 q_evals
@@ -246,11 +294,9 @@ impl StarkProver {
             &combined_constraint,
             &folding_commitment_trees,
         );
-        let verifier_random_challenges = generate_spot_check_challenges(
-            &proof_transcript,
-            &extended_domain,
-            total_queries,
-        );
+
+        let verifier_random_challenges =
+            generate_spot_check_challenges(&proof_transcript, &extended_domain, total_queries);
 
         StarkProof {
             quotient_eval_domain: fri_layers[0].clone(),

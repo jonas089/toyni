@@ -2,7 +2,9 @@ use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
-use crate::{math::polynomial::Polynomial, merkle::verify_merkle_proof, prover::StarkProof, digest_sha2};
+use crate::{
+    digest_sha2, math::polynomial::Polynomial, merkle::verify_merkle_proof, prover::StarkProof,
+};
 
 /// STARK verifier component that verifies proofs.
 ///
@@ -22,9 +24,7 @@ impl StarkVerifier {
     ///
     /// * `trace_len` - The length of the execution trace
     pub fn new(trace_len: usize) -> Self {
-        Self {
-            trace_len,
-        }
+        Self { trace_len }
     }
 
     /// Verifies a STARK proof.
@@ -93,9 +93,6 @@ impl StarkVerifier {
             current_layer = next_layer;
         }
 
-        // Low degree check: verify the final FRI layer has the expected small degree
-        let final_layer = proof.fri_layers.last().expect("FRI layers should not be empty");   
-
         // Verify constraint satisfaction at random points
         let verifier_transcript = build_verifier_transcript(
             &proof.quotient_eval_domain,
@@ -105,15 +102,16 @@ impl StarkVerifier {
             &proof.folding_commitment_trees,
         );
         let verifier_hash = digest_sha2(&verifier_transcript);
-        
+
         for i in 0..proof.verifier_random_challenges.len() {
             // Generate deterministic challenge using Fiat-Shamir
             let mut challenge_bytes = [0u8; 32];
             let hash_offset = (i * 32) % verifier_hash.len();
             let bytes_to_copy = std::cmp::min(32, verifier_hash.len() - hash_offset);
-            challenge_bytes[..bytes_to_copy].copy_from_slice(&verifier_hash[hash_offset..hash_offset + bytes_to_copy]);
+            challenge_bytes[..bytes_to_copy]
+                .copy_from_slice(&verifier_hash[hash_offset..hash_offset + bytes_to_copy]);
             let random_interactive_challenge = Fr::from_le_bytes_mod_order(&challenge_bytes);
-            
+
             let q_eval = proof.quotient_poly.evaluate(random_interactive_challenge);
             let z_eval = z_poly.evaluate(random_interactive_challenge);
             let c_eval = proof
@@ -139,35 +137,35 @@ fn build_verifier_transcript(
     folding_commitment_trees: &[crate::merkle::MerkleTree],
 ) -> Vec<u8> {
     let mut transcript = Vec::new();
-    
+
     // Add quotient polynomial evaluations
     for eval in quotient_eval_domain {
         transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
     }
-    
+
     // Add FRI layers
     for layer in fri_layers {
         for eval in layer {
             transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
         }
     }
-    
+
     // Add FRI challenges
     for challenge in fri_challenges {
         transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
     }
-    
+
     // Add constraint polynomial coefficients
     for coeff in combined_constraint.coefficients() {
         transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
     }
-    
+
     // Add Merkle tree roots
     for tree in folding_commitment_trees {
         if let Some(root) = tree.root() {
             transcript.extend_from_slice(&root);
         }
     }
-    
+
     transcript
 }

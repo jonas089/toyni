@@ -2,19 +2,24 @@
 mod tests {
     use ark_bls12_381::Fr;
     use ark_ff::Field;
-    use toyni::{prover::StarkProver, verifier::StarkVerifier, program::{constraints::ConstraintSystem, trace::ExecutionTrace}};
+    use ark_poly::EvaluationDomain;
+    use ark_poly::domain::GeneralEvaluationDomain;
     use std::collections::HashMap;
     use toyni::prover::build_proof_transcript;
-    use ark_poly::domain::GeneralEvaluationDomain;
-    use ark_poly::EvaluationDomain;
     use toyni::prover::generate_spot_check_challenges;
+    use toyni::{
+        program::{constraints::ConstraintSystem, trace::ExecutionTrace},
+        prover::StarkProver,
+        verifier::StarkVerifier,
+    };
 
     #[test]
     fn test_valid_proof() {
-        let mut trace = ExecutionTrace::new(4, 1);
+        let mut trace = ExecutionTrace::new(4, 2);
         for i in 0..4 {
             let mut row = HashMap::new();
             row.insert("x".to_string(), i);
+            row.insert("y".to_string(), i * 2);
             trace.insert_column(row);
         }
 
@@ -43,10 +48,11 @@ mod tests {
 
     #[test]
     fn test_invalid_proof() {
-        let mut trace = ExecutionTrace::new(4, 1);
+        let mut trace = ExecutionTrace::new(4, 2);
         for i in 0..4 {
             let mut row = HashMap::new();
             row.insert("x".to_string(), i + 1); // invalid
+            row.insert("y".to_string(), i * 2);
             trace.insert_column(row);
         }
 
@@ -75,10 +81,11 @@ mod tests {
 
     #[test]
     fn test_larger_trace() {
-        let mut trace = ExecutionTrace::new(8, 1);
+        let mut trace = ExecutionTrace::new(8, 2);
         for i in 0..8 {
             let mut row = HashMap::new();
             row.insert("x".to_string(), i);
+            row.insert("y".to_string(), i * 2);
             trace.insert_column(row);
         }
 
@@ -151,10 +158,11 @@ mod tests {
 
     #[test]
     fn test_zero_values() {
-        let mut trace = ExecutionTrace::new(4, 1);
+        let mut trace = ExecutionTrace::new(4, 2);
         for _ in 0..4 {
             let mut row = HashMap::new();
             row.insert("x".to_string(), 0); // All zeros
+            row.insert("y".to_string(), 1);
             trace.insert_column(row);
         }
 
@@ -271,10 +279,11 @@ mod tests {
 
     #[test]
     fn test_challenge_consistency() {
-        let mut trace = ExecutionTrace::new(4, 1);
+        let mut trace = ExecutionTrace::new(4, 2);
         for i in 0..4 {
             let mut row = HashMap::new();
             row.insert("x".to_string(), i);
+            row.insert("y".to_string(), i * 2);
             trace.insert_column(row);
         }
 
@@ -306,20 +315,18 @@ mod tests {
             &proof.combined_constraint,
             &proof.folding_commitment_trees,
         );
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace.height as usize * 8).unwrap();
-        
+        let extended_domain =
+            GeneralEvaluationDomain::<Fr>::new(trace.height as usize * 8).unwrap();
+
         // Calculate the same number of queries as the prover
         let total_fri_layers = proof.fri_layers.len();
         let log_l = (total_fri_layers as f64).log2();
         let optimal_queries = (log_l + 128.0).ceil() as usize;
         let constraint_queries = 64; // MIN_VERIFIER_QUERIES
         let total_queries = optimal_queries + constraint_queries;
-        
-        let verifier_random_challenges = generate_spot_check_challenges(
-            &proof_transcript,
-            &extended_domain,
-            total_queries,
-        );
+
+        let verifier_random_challenges =
+            generate_spot_check_challenges(&proof_transcript, &extended_domain, total_queries);
         assert_eq!(proof.verifier_random_challenges, verifier_random_challenges);
     }
 }
