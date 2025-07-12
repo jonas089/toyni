@@ -9,12 +9,21 @@ Welcome to Toyni! This is an implementation of a STARK (Scalable Transparent Arg
 
 Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)
 
-
 > [!WARNING]  
 > This is a research project and hasn't been audited. Use at your own risk.
 > There are some essential and critical features still missing, especially the
 > trace commitment with merkle proof verifications.
 > This codebase is not complete by any means and an active work in progress.
+
+## Work in Progress
+Currently working on masked trace commitments for zero-knowledge spot checks. This is critical to the security of the protocol.
+My understanding of this is:
+
+1. interpolate the trace colums as polynomials
+2. evaluate the trace column polynomials over the extended domain
+3. interpolate the constraint polys from the original domain (tbd: random linear combinations) and sum them to get the composite constraint poly
+4. check that C(X) = Z(X) * Q(X) (Q from the original domain) for X -> T(s) -> T + Z * r, where s is the spot check
+from the extended domain
 
 ## 0. Background, STARK Verifier: Constraint vs FRI Layer Checks
 

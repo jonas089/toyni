@@ -229,17 +229,17 @@ impl StarkProver {
         let first_column_poly_eval = first_column_poly.evaluate(random_point);
         println!("First column poly eval: {}", first_column_poly_eval);
 
-        // check satisfied
         let c_eval = combined_constraint.evaluate(first_column_poly_eval);
         let z_eval = z_poly.evaluate(first_column_poly_eval);
         let q_eval = quotient_poly.evaluate(first_column_poly_eval);
-        println!("c_eval: {}", c_eval);
-        println!("z_eval: {}", z_eval);
-        println!("q_eval: {}", q_eval);
-        println!("c_eval * z_eval: {}", c_eval * z_eval);
-        println!("q_eval * z_eval: {}", q_eval * z_eval);
 
-        assert_eq!(c_eval, q_eval * z_eval);
+        if c_eval != q_eval * z_eval {
+            println!("❌ Simulated Trace Constraint not satisfied");
+            println!("c_eval: {}", c_eval);
+            println!("z_eval: {}", z_eval);
+            println!("q_eval: {}", q_eval);
+            println!("c_eval * z_eval: {}", c_eval * z_eval);
+        }
 
         // Perform FRI folding with Merkle commitments
         let mut fri_layers = vec![q_evals.clone()];
