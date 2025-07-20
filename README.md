@@ -15,31 +15,30 @@ Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.
 > trace commitment with merkle proof verifications.
 > This codebase is not complete by any means and an active work in progress.
 
-## Work in Progress
-Currently working on masked trace commitments for zero-knowledge spot checks. This is critical to the security of the protocol.
-My understanding of this is:
+## Currently in progress
+In order to achieve a real STARK prover with zero knowledge properties, we must add the following features / checks:
 
-1. interpolate the trace colums as polynomials
-2. evaluate the trace column polynomials over the extended domain
-3. interpolate the constraint polys from the original domain (tbd: random linear combinations) and sum them to get the composite constraint poly
-4. check that C(X) = Z(X) * Q(X) (Q from the original domain) for X -> T(s) -> T + Z * r, where s is the spot check
-from the extended domain
+1. Constrain the degree of Q, depending on the domain size N, to be close to N - 1 
+2. Evaluate each constraint polynomial over the extended domain (random spot checks), verifying that C'(z) = C(z)
+The 2nd step is necessary in addition to the C(z) = Q(z) * Z(z) check, in order to uniquely link the program logic / the raw constraints
+to the proof. If the constraints evaluate the same over the extended domain for a number of random spot checks, then it is highly unlikely,
+given that Q is low degree, that the prover was able to cheat by using an invalid trace or composite constraint polynomial C.
 
-## 0. Background, STARK Verifier: Constraint vs FRI Layer Checks
+## Background, STARK Verifier: Constraint vs FRI Layer Checks
 
 ## ✅ Constraint Check (Single Layer)
 - For each randomly sampled point `x`:
   - Verifier checks:
     ```
-    Q(x) * Z(x) == C(x)
+    Q(z) * Z(z) == C(z)
     ```
   - Ensures that the execution trace satisfies all constraints
 ---
 
 ## ✅ FRI Layer Checks (Multiple Layers)
-- Purpose: Prove that `Q(x)` is a **low-degree polynomial**
+- Purpose: Prove that `Q(z)` is a **low-degree polynomial**
 - Process:
-  1. Start with evaluations of `Q(x)` over the domain (Layer 0)
+  1. Start with evaluations of `Q(z)` over the domain (Layer 0)
   2. Recursively apply `fri_fold()` to reduce degree at each layer
   3. At each layer:
      - Verifier checks Merkle proofs for sampled values
@@ -50,26 +49,6 @@ from the extended domain
 - ✅ Folding correctness is verified at each layer
 
 ---
-
-## 🔍 STARK Verifier Flow: Visual Diagram
-
-```mermaid
-sequenceDiagram
-    participant Proof_Data
-    participant Constraint_Check
-    participant FRI_Protocol
-    participant FRI_Merkle_Commitment
-    participant FRI_Consistency
-    participant FRI_Layers
-    participant Accept_Proof
-
-    Proof_Data-->Constraint_Check: Check Q(x)·Z(x) == C(x)
-    Proof_Data-->FRI_Protocol: Begin FRI protocol
-    FRI_Protocol-->FRI_Merkle_Commitment: Verify Merkle proofs
-    FRI_Merkle_Commitment-->FRI_Consistency: Check folding inputs + β
-    FRI_Consistency-->FRI_Layers: Fold with β0..βn
-    FRI_Layers-->Accept_Proof: ✅ Accept Proof
-```
 
 >[!NOTE]
 > FRI folding equation:
@@ -126,39 +105,9 @@ Use `n = 64–80` spot checks for strong 128-bit soundness across typical domain
 
 | Check Type         | Equation Checked              | Merkle Proofs | Multiple Layers? |
 |--------------------|-------------------------------|----------------|-------------------|
-| Constraint Check   | `Q(x) * Z(x) == C(x)`          | Optional       | ❌ No             |
+| Constraint Check   | `Q(z) * Z(z) == C(z)`          | Optional       | ❌ No             |
 | FRI Layer Check    | Folding consistency, low-degree| ✅ Yes          | ✅ Yes            |
 
-
-## 1. Introduction
-
-STARKs are a powerful cryptographic tool that enables proving the correct execution of a computation without revealing the underlying data. Think of it as a way to convince someone that you know the solution to a puzzle without actually showing them the solution. This property, known as zero-knowledge, is crucial for privacy-preserving applications in areas like financial transactions, voting systems, and private identity verification.
-
-### 2. Why STARKs Matter
-
-| Scalability | Transparency | Zero-Knowledge |
-|-------------|--------------|----------------|
-| • O(log² n) proof size | • No trusted setup | • Privacy |
-| • Fast verify | • Public parameters | • Confidentiality |
-| • Efficient | | • Data protection |
-| | | • Secure sharing |
-
-### 3. Real-World Applications
-
-| Financial | Identity | Computing |
-|-----------|----------|-----------|
-| • Private payments | • Age verification | • Confidential computing |
-| • Asset ownership | • Credential validation | • Private ML |
-| | | • Secure MPC |
-
-## 4. Technical Overview
-
-At its heart, Toyni consists of three main components working together:
-
-| Virtual Machine | Constraint System | STARK Prover |
-|----------------|-------------------|--------------|
-| •  | • Defines rules | • Generates proofs |
-| • | • Validates states | • Uses FRI protocol |
 
 ### FRI Layer Scaling
 
@@ -177,7 +126,7 @@ Where `N` is the trace size (number of execution steps). This scaling ensures th
 
 This logarithmic scaling is crucial for STARK's efficiency - proof size grows only logarithmically with computation size.
 
-### 5. How It Works
+### How It Works
 
 | Program Execution | Execution Trace | Verification |
 |------------------|-----------------|--------------|
@@ -220,9 +169,9 @@ fn test_valid_proof() {
 }
 ```
 
-This example demonstrates how Toyni can prove that a sequence of numbers follows a specific pattern (incrementing by 1) without revealing the actual numbers. The proof can be verified by anyone, but the actual values remain private.
+This example shows how Toyni can prove that a sequence of numbers follows a specific pattern (incrementing by 1) without revealing the actual numbers. The proof can be verified by anyone, but the actual values remain private.
 
-### 6. Security Properties
+### Security Properties
 
 STARKs achieve their security through a combination of domain extension and low-degree testing. Here's how it works:
 
@@ -251,73 +200,8 @@ This means that if a prover tries to cheat by modifying a fraction 1/b of the do
 
 **Example**: With a blowup factor of 8 and 80 constraint queries, the constraint soundness error is at most (1/8)^80 ≈ 2^(-240), providing far more than the required 128-bit security.
 
-## 7. Project Structure
-
-The codebase is organized into logical components:
-
-| Math | VM | Library |
-|------|----|---------|
-| • Polynomial | • Constraints | • Entry point |
-| • Domain | • Trace | • Public API |
-| • FRI | • Execution | • Documentation |
-| • STARK | | |
-
-
-### 8. Current Features
-
-| Constraint System | FRI Protocol | Mathematical Operations |
-|------------------|--------------|------------------------|
-| • Transition constraints | • Low-degree testing | • Polynomial arithmetic |
-| • Boundary constraints | • Interactive verification | • Field operations |
-| • Quotient verification | • FRI folding layers | • Domain operations |
-| • Merkle commitments | • Folding consistency checks | • Secure commitments |
-| • Trace Privacy | • Fiat Shamir verifier challenges | • Conservative FRI verification |
-
-**Security Note**: Our FRI implementation uses a conservative approach by verifying ALL points in each layer rather than sampling, providing security well above the theoretical minimum requirements.
-
-### 9. Missing Components
-
-| Zero-Knowledge | Performance | Optimization |
-|----------------|-------------|--------------|
-| • Enhanced state protection | • GPU Acceleration | • IFFT for interpolation |
-| • Deterministic hashing | • Non-interactive proofs | • No dependency on arkworks |
-
-While we have a working STARK implementation with quotient polynomial verification, FRI folding, and basic zero-knowledge properties, there are still some components to implement:
-
-1. **Performance Optimizations**: Need to implement parallel processing and batch verification for better scalability.
-2. **Circuit-Specific Features**: Add support for specialized circuits and optimizations.
-
-### 10. Roadmap
-
-#### Completed Features ✅
-- Basic STARK implementation with constraint checks
-- FRI protocol with folding layers
-- Merkle commitments for FRI layers
-- Folding consistency verification
-- Interactive verification protocol
-- Fiat-Shamir transform implementation
-- Zero-knowledge polynomial masking
-
-#### In Progress 🚧
-- Performance optimizations
-- Circuit-specific optimizations
-
-#### Future Work 📅
-- Enhanced zero-knowledge properties
-- Parallel processing support
-- Batch verification
-- Circuit-specific optimizations
-- Documentation improvements
-
-### 11. Security Properties
-
+### Security Properties
 STARKs achieve their security through a combination of domain extension, low-degree testing, and Merkle commitments. Here's how it works:
-
-| Domain Extension | Low-Degree Testing | Merkle Commitments |
-|-----------------|-------------------|-------------------|
-| • Extend domain | • FRI protocol | • Tree structure |
-| • Blowup factor | • Polynomial degree | • Proof generation |
-| • Soundness | • Folding checks | • Commitment verification |
 
 The security of a STARK proof relies on three key mechanisms:
 
@@ -339,16 +223,7 @@ where:
 
 This means that if a prover tries to cheat by modifying a fraction 1/b of the domain, the verifier will detect this with probability at least 1 - (1/b)^q. For example, with a blowup factor of 8 and 10 queries, the soundness error is at most (1/8)^10 ≈ 0.0000001.
 
-## 12. Contributing
-
-We welcome contributions to Toyni! Our current focus is on enhancing zero-knowledge properties and improving the overall system. We're particularly interested in:
-
-1. Enhancing zero-knowledge properties and state protection
-2. Adding comprehensive test coverage and security audits
-3. Improving documentation and adding more examples
-4. Optimizing performance and reducing proof sizes
-
-# 13. Associated With
+# Associated With
 
 <div align="center">
 
