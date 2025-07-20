@@ -193,53 +193,10 @@ impl StarkProver {
             .map(|x| quotient_poly.evaluate(x))
             .collect();
 
-        // Interpolate trace polynomials for each variable
-        let mut trace_polynomials = Vec::new();
-
-        // Get all variable names from the first column
-        let variable_names: Vec<String> = if let Some(first_column) = self.trace.trace.first() {
-            first_column.keys().cloned().collect()
-        } else {
-            Vec::new()
-        };
-
-        for variable_name in &variable_names {
-            // Extract values for this variable across all steps
-            let mut variable_values = Vec::new();
-            for step in 0..self.trace.trace.len() {
-                let column_trace = &self.trace.trace[step];
-                let value = column_trace.get(variable_name).unwrap_or(&0);
-                variable_values.push(Fr::from(*value));
-            }
-            // Create domain points (powers of a generator)
-            let domain = GeneralEvaluationDomain::<Fr>::new(variable_values.len()).unwrap();
-            let domain_points: Vec<Fr> = domain.elements().collect();
-            // Interpolate the polynomial
-            let trace_poly = crate::math::fri::interpolate_poly(&domain_points, &variable_values);
-            let trace_poly = ToyniPolynomial::from_dense_poly(trace_poly);
-            trace_polynomials.push((variable_name.clone(), trace_poly));
-        }
-
-        // simulate verifier check for first column poly
-        // evaluate the first column poly at a random point from the extended domain
-        let mut rng = rand::thread_rng();
-        let random_index = rng.gen_range(0..extended_domain.size());
-        let random_point = extended_domain.element(random_index);
-        let first_column_poly = trace_polynomials[0].1.clone();
-        let first_column_poly_eval = first_column_poly.evaluate(random_point);
-        println!("First column poly eval: {}", first_column_poly_eval);
-
-        let c_eval = combined_constraint.evaluate(first_column_poly_eval);
-        let z_eval = z_poly.evaluate(first_column_poly_eval);
-        let q_eval = quotient_poly.evaluate(first_column_poly_eval);
-
-        if c_eval != q_eval * z_eval {
-            println!("❌ Simulated Trace Constraint not satisfied");
-            println!("c_eval: {}", c_eval);
-            println!("z_eval: {}", z_eval);
-            println!("q_eval: {}", q_eval);
-            println!("c_eval * z_eval: {}", c_eval * z_eval);
-        }
+        // todo: take each individual constraint polynomial and evaluate them over the extended domain,
+        // committing the results to a merkle tree.
+        // Share the functions that were used to interpolate the constraint polynomials with the verifier.
+        // Sample random points with fiat shamir and check that C(z) = C'(z) in the verifier code.
 
         // Perform FRI folding with Merkle commitments
         let mut fri_layers = vec![q_evals.clone()];
