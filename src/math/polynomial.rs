@@ -1,10 +1,10 @@
 //! Basic polynomial operations over finite fields.
 
 use ark_bls12_381::Fr;
-use ark_ff::{Zero, UniformRand};
+use ark_ff::{UniformRand, Zero};
 use ark_poly::univariate::DensePolynomial;
-use std::fmt;
 use rand;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 /// Polynomial with finite field coefficients.
@@ -183,6 +183,10 @@ impl Polynomial {
             result = result * x + coeff;
         }
         result
+    }
+
+    pub fn evaluate_at_u64(&self, x: u64) -> Fr {
+        self.evaluate(Fr::from(x))
     }
 
     /// Creates a polynomial from a dense polynomial.

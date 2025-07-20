@@ -18,16 +18,20 @@
 //! - `StarkProver`: Generates proofs from execution traces
 //! - `StarkVerifier`: Verifies proofs using FRI and Merkle commitments
 
+use std::collections::HashMap;
+
 use crate::digest_sha2;
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
+use crate::program::constraints::{self, BoundaryConstraint, TransitionConstraint};
+use crate::program::trace::ProgramVariable;
 use crate::program::{constraints::ConstraintSystem, trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ark_poly::DenseUVPolynomial;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial};
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
 use rand::Rng;
 
@@ -154,8 +158,6 @@ impl StarkProver {
         let trace_len = self.trace.height as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
-
-        // Interpolate all constraints into polynomials
         let constraint_polys = self.constraints.interpolate_all_constraints(&self.trace);
 
         // Combine all constraints into a single polynomial
@@ -164,12 +166,37 @@ impl StarkProver {
             combined_constraint = combined_constraint.add(&poly);
         }
 
-        // Generate random polynomial for zero-knowledge
-        //let mut rng = thread_rng();
-        //let random_poly = ToyniPolynomial::random(extended_domain.size() - 1, &mut rng);
+        let mut check_sum: BigInt = BigInt::ZERO;
 
-        // Multiply combined constraint by random polynomial
-        // let masked_constraint = combined_constraint.mul(&random_poly);
+        let mut first_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
+        let mut second_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
+
+        first_domain_element.insert(
+            ProgramVariable::from("x".to_string()),
+            extended_domain.element(0).into_bigint().0[0],
+        );
+        first_domain_element.insert(
+            ProgramVariable::from("y".to_string()),
+            extended_domain.element(0).into_bigint().0[0],
+        );
+        second_domain_element.insert(
+            ProgramVariable::from("x".to_string()),
+            extended_domain.element(1).into_bigint().0[0],
+        );
+
+        for transition_constraint in self.constraints.transition_constraints.iter().clone() {
+            check_sum +=
+                (transition_constraint.evaluate)(&first_domain_element, &first_domain_element)
+                    .into_bigint()
+                    .0[0];
+        }
+        for boundary_constraint in self.constraints.boundary_constraints.iter().clone() {
+            check_sum += (boundary_constraint.evaluate)(&first_domain_element)
+                .into_bigint()
+                .0[0];
+        }
+
+        println!("prover check: {}", check_sum);
 
         // Evaluate masked constraint over extended domain
         let c_evals: Vec<Fr> = extended_domain

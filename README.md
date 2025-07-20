@@ -19,10 +19,7 @@ Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.
 In order to achieve a real STARK prover with zero knowledge properties, we must add the following features / checks:
 
 1. Constrain the degree of Q, depending on the domain size N, to be close to N - 1 
-2. Evaluate each constraint polynomial over the extended domain (random spot checks), verifying that C'(z) = C(z)
-The 2nd step is necessary in addition to the C(z) = Q(z) * Z(z) check, in order to uniquely link the program logic / the raw constraints
-to the proof. If the constraints evaluate the same over the extended domain for a number of random spot checks, then it is highly unlikely,
-given that Q is low degree, that the prover was able to cheat by using an invalid trace or composite constraint polynomial C.
+2. Implement a verifier check that proves that each individual constraint polynomial Ci was interpolated correctly from the constraints (transition, boundary)
 
 ## Background, STARK Verifier: Constraint vs FRI Layer Checks
 
