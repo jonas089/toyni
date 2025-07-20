@@ -160,53 +160,27 @@ impl StarkProver {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let constraint_polys = self.constraints.interpolate_all_constraints(&self.trace);
 
-        // Combine all constraints into a single polynomial
-        let mut combined_constraint = ToyniPolynomial::zero();
-        for poly in constraint_polys {
-            combined_constraint = combined_constraint.add(&poly);
+        // todo: interpolate the trace columns one by one
+        // Ci(x) = T(gx) - T(x) over the original domain for each T
+        // C(x) = C1(x) + C2(x) + ... + Cn(x)
+
+        let mut combined_evals = vec![Fr::from(0); domain.size()];
+
+        // For each constraint polynomial
+        for poly in constraint_polys.iter() {
+            // For each point in the extended domain (with index)
+            for (i, domain_point) in domain.elements().enumerate() {
+                let eval = poly.evaluate(domain_point);
+                combined_evals[i] += eval; // Pointwise addition
+            }
         }
 
-        let mut check_sum: BigInt = BigInt::ZERO;
+        // Now interpolate the result back into a polynomial
+        let combined_constraint =
+            ark_poly::Evaluations::from_vec_and_domain(combined_evals, domain).interpolate();
+        let c_poly = ToyniPolynomial::from_dense_poly(combined_constraint);
 
-        let mut first_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
-        let mut second_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
-
-        first_domain_element.insert(
-            ProgramVariable::from("x".to_string()),
-            extended_domain.element(0).into_bigint().0[0],
-        );
-        first_domain_element.insert(
-            ProgramVariable::from("y".to_string()),
-            extended_domain.element(0).into_bigint().0[0],
-        );
-        second_domain_element.insert(
-            ProgramVariable::from("x".to_string()),
-            extended_domain.element(1).into_bigint().0[0],
-        );
-
-        for transition_constraint in self.constraints.transition_constraints.iter().clone() {
-            check_sum +=
-                (transition_constraint.evaluate)(&first_domain_element, &first_domain_element)
-                    .into_bigint()
-                    .0[0];
-        }
-        for boundary_constraint in self.constraints.boundary_constraints.iter().clone() {
-            check_sum += (boundary_constraint.evaluate)(&first_domain_element)
-                .into_bigint()
-                .0[0];
-        }
-
-        println!("prover check: {}", check_sum);
-
-        // Evaluate masked constraint over extended domain
-        let c_evals: Vec<Fr> = extended_domain
-            .elements()
-            .map(|x| combined_constraint.evaluate(x))
-            .collect();
-
-        // Interpolate constraint polynomial from evaluations
-        let c_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&c_evals));
-        let c_poly = ToyniPolynomial::from_dense_poly(c_poly);
+        println!("c_poly: {:?}", c_poly);
 
         // Create vanishing polynomial
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
@@ -275,7 +249,7 @@ impl StarkProver {
             &q_evals,
             &fri_layers,
             &fri_challenges,
-            &combined_constraint,
+            &c_poly,
             &folding_commitment_trees,
         );
 
@@ -286,7 +260,7 @@ impl StarkProver {
             quotient_eval_domain: fri_layers[0].clone(),
             fri_layers,
             fri_challenges,
-            combined_constraint,
+            combined_constraint: c_poly,
             quotient_poly,
             folding_commitment_trees,
             verifier_random_challenges,

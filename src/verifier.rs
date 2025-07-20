@@ -69,13 +69,6 @@ impl StarkVerifier {
             extended_domain.element(1).into_bigint().0[0],
         );
 
-        println!(
-            "verifier check: {}",
-            proof
-                .combined_constraint
-                .evaluate_at_u64(extended_domain.element(6).into_bigint().0[0])
-        );
-
         // FRI folding consistency check with Merkle proof verification
         let mut current_layer = &proof.quotient_eval_domain;
         for (i, ((beta, next_layer), merkle_tree)) in proof
