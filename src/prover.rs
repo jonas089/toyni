@@ -161,7 +161,7 @@ impl StarkProver {
         let constraint_polys = self.constraints.interpolate_all_constraints(&self.trace);
 
         // todo: interpolate the trace columns one by one
-        // Ci(x) = T(gx) - T(x) over the original domain for each T
+        // Ci(x) = T(gx) - T(x) over the original domain for each T (note this is just an example constraint, the system must be adjusted accordingly to handle different kinds of constraints)
         // C(x) = C1(x) + C2(x) + ... + Cn(x)
 
         let mut combined_evals = vec![Fr::from(0); domain.size()];
