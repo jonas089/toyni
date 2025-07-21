@@ -1,39 +1,11 @@
-//! STARK (Scalable Transparent Argument of Knowledge) implementation.
-//!
-//! This module provides a STARK proving system implementation that:
-//! 1. Converts program execution into a trace polynomial
-//! 2. Constructs a composition polynomial from constraints
-//! 3. Uses the FRI protocol to prove low-degree
-//!
-//! # Security Properties
-//!
-//! The implementation provides:
-//! - Scalability: Proof size is logarithmic in computation size
-//! - Transparency: No trusted setup required
-//! - Zero-knowledge: Hides execution details through FRI and Merkle commitments
-//!
-//! # Components
-//!
-//! - `StarkProof`: Contains all components needed for verification
-//! - `StarkProver`: Generates proofs from execution traces
-//! - `StarkVerifier`: Verifies proofs using FRI and Merkle commitments
-
-use std::collections::HashMap;
-
-use crate::digest_sha2;
-use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
-use crate::program::constraints::{self, BoundaryConstraint, TransitionConstraint};
-use crate::program::trace::ProgramVariable;
-use crate::program::{constraints::ConstraintSystem, trace::ExecutionTrace};
+use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use ark_poly::DenseUVPolynomial;
-use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial};
-use num_bigint::{BigInt, BigUint};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use rand::Rng;
 
 /// Calculate the optimal number of queries for 128-bit security
 /// Based on the formula: m ≥ log₂(L) + 128
@@ -125,8 +97,6 @@ pub struct StarkProof {
 pub struct StarkProver {
     /// Execution trace to prove
     trace: ExecutionTrace,
-    /// Constraint system defining program rules
-    constraints: ConstraintSystem,
 }
 
 impl StarkProver {
@@ -136,8 +106,8 @@ impl StarkProver {
     ///
     /// * `trace` - The execution trace to prove
     /// * `constraints` - The constraint system defining program rules
-    pub fn new(trace: ExecutionTrace, constraints: ConstraintSystem) -> Self {
-        Self { trace, constraints }
+    pub fn new(trace: ExecutionTrace) -> Self {
+        Self { trace }
     }
 
     /// Generates a STARK proof for the execution trace.
@@ -158,32 +128,15 @@ impl StarkProver {
         let trace_len = self.trace.height as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
-        let constraint_polys = self.constraints.interpolate_all_constraints(&self.trace);
 
         // todo: interpolate the trace columns one by one
         // Ci(x) = T(gx) - T(x) over the original domain for each T (note this is just an example constraint, the system must be adjusted accordingly to handle different kinds of constraints)
         // C(x) = C1(x) + C2(x) + ... + Cn(x)
-
-        let mut combined_evals = vec![Fr::from(0); domain.size()];
-
-        // For each constraint polynomial
-        for poly in constraint_polys.iter() {
-            // For each point in the extended domain (with index)
-            for (i, domain_point) in domain.elements().enumerate() {
-                let eval = poly.evaluate(domain_point);
-                combined_evals[i] += eval; // Pointwise addition
-            }
-        }
-
-        // Now interpolate the result back into a polynomial
-        let combined_constraint =
-            ark_poly::Evaluations::from_vec_and_domain(combined_evals, domain).interpolate();
-        let c_poly = ToyniPolynomial::from_dense_poly(combined_constraint);
-
-        println!("c_poly: {:?}", c_poly);
+        // Note that Ci(x) is always the same for the given program, and it's a symbolic polynomial meaning it does not hold any logic from the verifier point of view.
+        // todo: implement proper air table
 
         // Create vanishing polynomial
-        let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
+        /*let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
         // Divide to get quotient polynomial
         let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
@@ -238,12 +191,6 @@ impl StarkProver {
         let constraint_queries = MIN_VERIFIER_QUERIES;
         let total_queries = optimal_queries + constraint_queries;
 
-        println!("🔐 Security Parameters:");
-        println!("  FRI layers: {}", total_fri_layers);
-        println!("  Optimal FRI queries for 128-bit: {}", optimal_queries);
-        println!("  Constraint queries: {}", constraint_queries);
-        println!("  Total queries: {}", total_queries);
-
         // Generate random challenges for verification
         let proof_transcript = build_proof_transcript(
             &q_evals,
@@ -264,6 +211,15 @@ impl StarkProver {
             quotient_poly,
             folding_commitment_trees,
             verifier_random_challenges,
+        }*/
+        StarkProof {
+            quotient_eval_domain: vec![],
+            fri_layers: vec![],
+            fri_challenges: vec![],
+            combined_constraint: ToyniPolynomial::new(vec![Fr::from(0)]),
+            quotient_poly: ToyniPolynomial::new(vec![Fr::from(0)]),
+            folding_commitment_trees: vec![],
+            verifier_random_challenges: vec![],
         }
     }
 }

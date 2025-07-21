@@ -1,13 +1,6 @@
-//! Execution trace recording for virtual machine.
-//!
-//! Records program execution as a matrix where columns are variables and rows are execution steps.
-
 use std::collections::HashMap;
-
-/// Program variable name type.
 pub type ProgramVariable = String;
 
-/// Execution trace storing program state changes.
 #[derive(Clone)]
 pub struct ExecutionTrace {
     /// Number of execution steps
@@ -95,7 +88,7 @@ mod tests {
         }
         execution_trace
     }
-    
+
     #[test]
     fn test_interpolation() {
         let execution_trace = generate_test_trace();

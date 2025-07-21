@@ -48,27 +48,7 @@ impl StarkVerifier {
     /// `true` if the proof is valid, `false` otherwise
     pub fn verify(&self, proof: &StarkProof) -> bool {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
-
-        let mut check_sum: BigInt = BigInt::ZERO;
-
-        let mut first_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
-        let mut second_domain_element: HashMap<ProgramVariable, u64> = HashMap::new();
-
-        first_domain_element.insert(
-            ProgramVariable::from("x".to_string()),
-            extended_domain.element(6).into_bigint().0[0],
-        );
-        first_domain_element.insert(
-            ProgramVariable::from("y".to_string()),
-            extended_domain.element(6).into_bigint().0[0],
-        );
-        second_domain_element.insert(
-            ProgramVariable::from("x".to_string()),
-            extended_domain.element(1).into_bigint().0[0],
-        );
-
         // FRI folding consistency check with Merkle proof verification
         let mut current_layer = &proof.quotient_eval_domain;
         for (i, ((beta, next_layer), merkle_tree)) in proof

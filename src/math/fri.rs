@@ -1,15 +1,9 @@
-//! Fast Reed-Solomon Interactive Oracle Proof (FRI) implementation.
-//!
-//! The FRI protocol proves polynomial low-degree by iteratively folding evaluations
-//! and reducing domain size. Each round combines pairs of points using a random challenge.
-
 use ark_bls12_381::Fr;
 use ark_ff::Field;
 use ark_poly::{
     EvaluationDomain, Evaluations, GeneralEvaluationDomain, univariate::DensePolynomial,
 };
 
-/// Folds evaluations using FRI protocol with challenge beta.
 pub fn fri_fold(evals: &[Fr], beta: Fr) -> Vec<Fr> {
     assert!(evals.len() % 2 == 0, "Evaluations length must be even");
     let mut result = Vec::with_capacity(evals.len() / 2);
@@ -26,7 +20,6 @@ pub fn fri_fold(evals: &[Fr], beta: Fr) -> Vec<Fr> {
     result
 }
 
-/// Interpolates polynomial from points using FFT.
 pub fn interpolate_poly(xs: &[Fr], ys: &[Fr]) -> DensePolynomial<Fr> {
     assert_eq!(xs.len(), ys.len(), "Mismatched lengths");
     let domain =
