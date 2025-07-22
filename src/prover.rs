@@ -87,6 +87,9 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
+        for column_idx in 0..self.trace.trace.len() {
+            //let poly = self.trace.interpolate_column(domain, column_idx);
+        }
         // todo: interpolate the trace columns one by one
         // Ci(x) = T(gx) - T(x) over the original domain for each T (note this is just an example constraint, the system must be adjusted accordingly to handle different kinds of constraints)
         // C(x) = C1(x) + C2(x) + ... + Cn(x)
