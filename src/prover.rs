@@ -20,48 +20,6 @@ fn calculate_optimal_queries(fri_layers: usize) -> usize {
 /// This will be calculated dynamically based on FRI layers for 128-bit security
 const MIN_VERIFIER_QUERIES: usize = 64; // Minimum for constraint checks
 
-/// Builds a transcript for Fiat-Shamir challenge generation
-pub fn build_proof_transcript(
-    quotient_eval_domain: &[Fr],
-    fri_layers: &[Vec<Fr>],
-    fri_challenges: &[Fr],
-    combined_constraint: &ToyniPolynomial,
-    folding_commitment_trees: &[MerkleTree],
-) -> Vec<u8> {
-    let mut transcript = Vec::new();
-
-    // Add quotient polynomial evaluations
-    for eval in quotient_eval_domain {
-        transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
-    }
-
-    // Add FRI layers
-    for layer in fri_layers {
-        for eval in layer {
-            transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
-        }
-    }
-
-    // Add FRI challenges
-    for challenge in fri_challenges {
-        transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
-    }
-
-    // Add constraint polynomial coefficients
-    for coeff in combined_constraint.coefficients() {
-        transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
-    }
-
-    // Add Merkle tree roots
-    for tree in folding_commitment_trees {
-        if let Some(root) = tree.root() {
-            transcript.extend_from_slice(&root);
-        }
-    }
-
-    transcript
-}
-
 /// STARK proof containing all components needed for verification.
 ///
 /// The proof consists of:
@@ -125,7 +83,7 @@ impl StarkProver {
     ///
     /// A `StarkProof` containing all components needed for verification
     pub fn generate_proof(&self) -> StarkProof {
-        let trace_len = self.trace.height as usize;
+        let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 

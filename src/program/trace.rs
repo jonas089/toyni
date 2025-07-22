@@ -3,116 +3,74 @@ pub type ProgramVariable = String;
 
 #[derive(Clone)]
 pub struct ExecutionTrace {
-    /// Number of execution steps
-    pub height: u64,
-    /// Number of program variables
-    pub width: u64,
-    /// Trace data as vector of variable-value maps
-    pub trace: Vec<HashMap<ProgramVariable, u64>>,
+    pub trace: Vec<Vec<u64>>,
 }
 
 impl ExecutionTrace {
-    /// Creates empty trace with given dimensions.
-    pub fn new(height: u64, width: u64) -> Self {
-        Self {
-            height,
-            width,
-            trace: Vec::new(),
+    pub fn new() -> Self {
+        Self { trace: Vec::new() }
+    }
+
+    /// Treats input as a column: inserts variable values over time.
+    pub fn insert_column(&mut self, column: Vec<u64>) {
+        if self.trace.is_empty() {
+            self.trace = column.into_iter().map(|val| vec![val]).collect();
+        } else {
+            assert_eq!(self.trace.len(), column.len(), "Column length mismatch");
+            for (row, val) in self.trace.iter_mut().zip(column.into_iter()) {
+                row.push(val);
+            }
         }
     }
 
-    /// Adds new execution step to trace.
-    pub fn insert_column(&mut self, column: HashMap<ProgramVariable, u64>) {
-        assert!(column.len() == self.width as usize);
-        assert!(self.trace.len() < self.height as usize);
-        self.trace.push(column);
-    }
-
-    /// Gets execution step by index.
-    pub fn get_column(&self, index: u64) -> &HashMap<ProgramVariable, u64> {
+    pub fn get_column(&self, index: u64) -> &Vec<u64> {
         &self.trace[index as usize]
     }
 
-    /// Prints trace in tabular format.
-    pub fn print_trace(&self, variables: Vec<ProgramVariable>) {
-        for i in 0..self.height {
-            let column = self.get_column(i);
-            for var in &variables {
-                print!("{} |", column.get(var).unwrap_or(&0));
+    pub fn interpolate_column(&self, domain: &[f64], column_idx: usize) -> impl Fn(f64) -> f64 {
+        assert_eq!(
+            domain.len(),
+            self.trace.len(),
+            "Domain length must match trace height"
+        );
+
+        let xs = domain.to_vec();
+        let ys: Vec<f64> = self
+            .trace
+            .iter()
+            .map(|row| row[column_idx] as f64)
+            .collect();
+
+        move |x: f64| {
+            let mut result = 0.0;
+
+            for (i, (&xi, &yi)) in xs.iter().zip(ys.iter()).enumerate() {
+                let mut li = 1.0;
+                for (j, &xj) in xs.iter().enumerate() {
+                    if i != j {
+                        li *= (x - xj) / (xi - xj);
+                    }
+                }
+                result += yi * li;
             }
-            println!();
+
+            result
         }
-    }
-
-    /// Interpolates variable value between two steps.
-    pub fn interpolate(&self, variable: &ProgramVariable, step1: u64, step2: u64, t: u8) -> u64 {
-        assert!(
-            step1 < self.height && step2 < self.height,
-            "Step indices out of bounds"
-        );
-        assert!(
-            t <= 100,
-            "Interpolation parameter must be between 0 and 100"
-        );
-
-        let col1 = self.get_column(step1);
-        let col2 = self.get_column(step2);
-
-        let val1 = *col1
-            .get(variable)
-            .expect("Variable not found in first step");
-        let val2 = *col2
-            .get(variable)
-            .expect("Variable not found in second step");
-
-        let diff = val2 - val1;
-        let scaled_diff = (diff * (t as u64)) / 100;
-        val1 + scaled_diff
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[test]
+fn test_interpolate_column_exact_points() {
+    let mut trace = ExecutionTrace::new();
+    trace.insert_column(vec![1, 2, 3]); // Adds values for column 0
+    trace.insert_column(vec![4, 5, 6]); // Adds values for column 1
+    let poly = trace.interpolate_column(&[2.0, 3.0, 4.0], 0);
+    assert_eq!(poly(2.0), 1.0);
+    assert_eq!(poly(3.0), 2.0);
+    assert_eq!(poly(4.0), 3.0);
 
-    fn generate_test_trace() -> ExecutionTrace {
-        let mut execution_trace = ExecutionTrace::new(5, 5);
-        for i in 0..execution_trace.height {
-            let mut column = HashMap::new();
-            column.insert("a".to_string(), i);
-            column.insert("b".to_string(), i + 1);
-            column.insert("c".to_string(), i + 2);
-            column.insert("d".to_string(), i + 3);
-            column.insert("e".to_string(), i + 4);
-            execution_trace.insert_column(column);
-        }
-        execution_trace
-    }
-
-    #[test]
-    fn test_interpolation() {
-        let execution_trace = generate_test_trace();
-
-        // Test variable "a" interpolation between steps 0 and 1
-        // step 0: 0, step 1: 1
-        let interpolated = execution_trace.interpolate(&"a".to_string(), 0, 1, 50);
-        assert_eq!(interpolated, 0); // At 50% between 0 and 1
-
-        // Test variable "b" interpolation between steps 0 and 1
-        // step 0: 1, step 1: 2
-        let interpolated = execution_trace.interpolate(&"b".to_string(), 0, 1, 0);
-        assert_eq!(interpolated, 1);
-
-        // Test variable "c" interpolation between steps 0 and 1
-        // step 0: 2, step 1: 3
-        let interpolated = execution_trace.interpolate(&"c".to_string(), 0, 1, 100);
-        assert_eq!(interpolated, 3);
-
-        // Additional test cases
-        let interpolated = execution_trace.interpolate(&"a".to_string(), 0, 1, 100);
-        assert_eq!(interpolated, 1);
-
-        let interpolated = execution_trace.interpolate(&"b".to_string(), 0, 1, 100);
-        assert_eq!(interpolated, 2);
-    }
+    let poly = &trace.interpolate_column(&[5.0, 6.0, 7.0], 1);
+    assert_eq!(poly(5.0), 4.0);
+    assert_eq!(poly(6.0), 5.0);
+    assert_eq!(poly(7.0), 6.0);
 }
