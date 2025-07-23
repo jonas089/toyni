@@ -3,15 +3,22 @@ use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain};
+use rand::thread_rng;
 
 /// Calculate the optimal number of queries for 128-bit security
 fn calculate_optimal_queries(fri_layers: usize) -> usize {
     let log_l = (fri_layers as f64).log2();
     let optimal_queries = log_l + 128.0;
     optimal_queries.ceil() as usize
+}
+
+fn random_poly(degree: usize) -> ToyniPolynomial {
+    let mut rng = thread_rng();
+    let coeffs: Vec<Fr> = (0..=degree).map(|_| Fr::rand(&mut rng)).collect();
+    ToyniPolynomial::new(coeffs)
 }
 
 const MIN_VERIFIER_QUERIES: usize = 64;
@@ -68,7 +75,10 @@ impl StarkProver {
             &domain.ifft(&domain_evaluations),
         ));
 
+        //C(x) = α₁ * c₁(x) + α₂ * c₂(x) + ... + αₖ * cₖ(x)
         let c_poly = ci_poly.clone();
+
+        println!("c_poly: {:?}", c_poly.coefficients);
 
         for i in 0..(extended_domain.size() - 2) {
             let x = extended_domain.element(i);
@@ -80,7 +90,10 @@ impl StarkProver {
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
-        let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
+        let r_poly = random_poly(2); // or higher degree if needed
+        let c_z_poly = c_poly.add(&r_poly.mul(&z_poly));
+
+        let (quotient_poly, _) = c_z_poly.divide(&z_poly).unwrap();
 
         println!("quotient_poly: {:?}", quotient_poly);
         println!("quotient_poly_size: {:?}", quotient_poly.coefficients.len());
