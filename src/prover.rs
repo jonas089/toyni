@@ -104,19 +104,18 @@ impl StarkProver {
         }
 
         // last row has no next, so n - 1
-        let mut extended_domain_constraint_evaluations: Vec<Fr> =
-            vec![Fr::ZERO; extended_domain.size() - 1];
+        let mut domain_evaluations: Vec<Fr> = vec![Fr::ZERO; extended_domain.size() - 1];
 
         // iterate over the domain elements pairwise and compute ci(x, y)
-        for index in 0..extended_domain_constraint_evaluations.len() - 1 {
+        for index in 0..domain_evaluations.len() - 1 {
             let tgx = trace_polys.first().unwrap()(extended_domain.element(index + 1));
             let tx = trace_polys.first().unwrap()(extended_domain.element(index));
             let eval = ci(tgx, tx);
-            extended_domain_constraint_evaluations[index] = eval;
+            domain_evaluations[index] = eval;
         }
 
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &extended_domain.ifft(&extended_domain_constraint_evaluations),
+            &extended_domain.ifft(&domain_evaluations),
         ));
 
         // test the evaluations (remove this in production), this checks that ci(gx, x) = c(x)
