@@ -83,7 +83,7 @@ impl MerkleTree {
     }
 }
 
-pub fn verify_merkle_proof(leaf:  Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
+pub fn verify_merkle_proof(leaf: Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
     let mut current_hash = leaf.clone();
 
     for (sibling, is_right) in proof.path.iter().zip(proof.position.iter()) {

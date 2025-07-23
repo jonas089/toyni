@@ -1,11 +1,11 @@
+use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{BigInteger, PrimeField};
-use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-use num_bigint::BigUint;
-use num_traits::ToPrimitive;
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
+use ark_poly::univariate::DensePolynomial;
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain};
 
 /// Calculate the optimal number of queries for 128-bit security
 /// Based on the formula: m ≥ log₂(L) + 128
@@ -87,17 +87,51 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
-        for column_idx in 0..self.trace.trace.len() {
-            //let poly = self.trace.interpolate_column(domain, column_idx);
-        }
-        // todo: interpolate the trace columns one by one
-        // Ci(x) = T(gx) - T(x) over the original domain for each T (note this is just an example constraint, the system must be adjusted accordingly to handle different kinds of constraints)
-        // C(x) = C1(x) + C2(x) + ... + Cn(x)
-        // Note that Ci(x) is always the same for the given program, and it's a symbolic polynomial meaning it does not hold any logic from the verifier point of view.
-        // todo: implement proper air table
+        let domain_slice: Vec<Fr> = domain.elements().map(|x| x).collect();
 
-        // Create vanishing polynomial
-        /*let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
+        let mut trace_polys = Vec::new();
+        // interpolate the first column of the trace (a single variable)
+        for column_idx in 0..self.trace.trace[0].len() {
+            println!("trace length: {}", self.trace.trace[0].len());
+            let poly = self.trace.interpolate_column(&domain_slice, column_idx);
+            trace_polys.push(poly);
+        }
+
+        // tgx: next domain element, tx: current domain element
+        // ranging from first to n - 1
+        fn ci(tgx: Fr, tx: Fr) -> Fr {
+            tgx - tx.square()
+        }
+
+        // last row has no next, so n - 1
+        let mut extended_domain_trace_evaluations: Vec<Fr> =
+            vec![Fr::ZERO; extended_domain.size() - 1];
+
+        // iterate over the domain elements pairwise and compute ci(x, y)
+        for index in 0..extended_domain_trace_evaluations.len() - 1 {
+            let tgx = extended_domain.element(index + 1);
+            let tx = extended_domain.element(index);
+            let eval = ci(tgx, tx);
+            extended_domain_trace_evaluations[index] = eval;
+        }
+
+        let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
+            &extended_domain.ifft(&extended_domain_trace_evaluations),
+        ));
+
+        println!("c_poly: {:?}", c_poly);
+
+        // test the evaluations (remove this in production), this checks that ci(gx, x) = c(x)
+        for (index, element) in extended_domain.elements().into_iter().enumerate() {
+            if index == extended_domain.size() - 2 {
+                break;
+            }
+            let c_eval = c_poly.evaluate(element);
+            let ci_eval = ci(extended_domain.element(index + 1), element);
+            assert_eq!(c_eval, ci_eval);
+        }
+
+        let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
         // Divide to get quotient polynomial
         let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
@@ -108,12 +142,6 @@ impl StarkProver {
             .map(|x| quotient_poly.evaluate(x))
             .collect();
 
-        // todo: take each individual constraint polynomial and evaluate them over the extended domain,
-        // committing the results to a merkle tree.
-        // Share the functions that were used to interpolate the constraint polynomials with the verifier.
-        // Sample random points with fiat shamir and check that C(z) = C'(z) in the verifier code.
-
-        // Perform FRI folding with Merkle commitments
         let mut fri_layers = vec![q_evals.clone()];
         let mut fri_challenges = Vec::new();
         let mut folding_commitment_trees: Vec<MerkleTree> = Vec::new();
@@ -152,27 +180,6 @@ impl StarkProver {
         let constraint_queries = MIN_VERIFIER_QUERIES;
         let total_queries = optimal_queries + constraint_queries;
 
-        // Generate random challenges for verification
-        let proof_transcript = build_proof_transcript(
-            &q_evals,
-            &fri_layers,
-            &fri_challenges,
-            &c_poly,
-            &folding_commitment_trees,
-        );
-
-        let verifier_random_challenges =
-            generate_spot_check_challenges(&proof_transcript, &extended_domain, total_queries);
-
-        StarkProof {
-            quotient_eval_domain: fri_layers[0].clone(),
-            fri_layers,
-            fri_challenges,
-            combined_constraint: c_poly,
-            quotient_poly,
-            folding_commitment_trees,
-            verifier_random_challenges,
-        }*/
         StarkProof {
             quotient_eval_domain: vec![],
             fri_layers: vec![],
@@ -183,29 +190,4 @@ impl StarkProver {
             verifier_random_challenges: vec![],
         }
     }
-}
-
-pub fn generate_spot_check_challenges(
-    transcript: &[u8],
-    domain: &GeneralEvaluationDomain<Fr>,
-    num_challenges: usize,
-) -> Vec<Fr> {
-    let proof_hash = digest_sha2(transcript);
-    let proof_hash_u32: Vec<u32> = proof_hash
-        .chunks(4)
-        .map(|chunk| {
-            let mut buf = [0u8; 4];
-            buf.copy_from_slice(chunk);
-            u32::from_be_bytes(buf)
-        })
-        .collect();
-    let proof_hash_int = BigUint::from_slice(&proof_hash_u32);
-    let mut challenges = Vec::new();
-    for i in 0..num_challenges {
-        let verifier_index = &proof_hash_int + BigUint::from(i as u32 + 1);
-        let verifier_index_field = verifier_index % BigUint::from(domain.size());
-        let challenge = domain.element(verifier_index_field.to_usize().unwrap());
-        challenges.push(challenge);
-    }
-    challenges
 }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, Field};
 pub type ProgramVariable = String;
