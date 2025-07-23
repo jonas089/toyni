@@ -65,7 +65,10 @@ impl StarkProver {
     /// * `trace` - The execution trace to prove
     /// * `constraints` - The constraint system defining program rules
     pub fn new(trace: ExecutionTrace) -> Self {
-        Self { trace }
+        Self { 
+            trace 
+            // Z
+        }
     }
 
     /// Generates a STARK proof for the execution trace.
@@ -84,15 +87,15 @@ impl StarkProver {
     /// A `StarkProof` containing all components needed for verification
     pub fn generate_proof(&self) -> StarkProof {
         let trace_len = self.trace.trace.len() as usize;
+
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
-
         let domain_slice: Vec<Fr> = domain.elements().map(|x| x).collect();
 
         let mut trace_polys = Vec::new();
+
         // interpolate the first column of the trace (a single variable)
         for column_idx in 0..self.trace.trace[0].len() {
-            println!("trace length: {}", self.trace.trace[0].len());
             let poly = self.trace.interpolate_column(&domain_slice, column_idx);
             trace_polys.push(poly);
         }
@@ -103,39 +106,56 @@ impl StarkProver {
             tgx - tx.square()
         }
 
-        // last row has no next, so n - 1
-        let mut domain_evaluations: Vec<Fr> = vec![Fr::ZERO; extended_domain.size() - 1];
 
-        // iterate over the domain elements pairwise and compute ci(x, y)
-        for index in 0..domain_evaluations.len() - 1 {
-            let tgx = trace_polys.first().unwrap()(extended_domain.element(index + 1));
-            let tx = trace_polys.first().unwrap()(extended_domain.element(index));
+        // last row has no next, so n - 1
+        let mut domain_evaluations = vec![Fr::ZERO; extended_domain.size() - 1];
+
+        // apply ci(x) once
+        for index in 0..(domain.size() - 1) {
+            let tgx = trace_polys[0](domain.element(index + 1));
+            let tx = trace_polys[0](domain.element(index));
             let eval = ci(tgx, tx);
-            domain_evaluations[index] = eval;
+            domain_evaluations[index] += eval;
         }
 
+        // interpolate ci(x)
+        let ci_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
+            &extended_domain.ifft(&domain_evaluations),
+        ));
+
+        // apply ci(x) again
+        for index in 0..(domain.size() - 1) {
+            let tgx = trace_polys[0](domain.element(index + 1));
+            let tx = trace_polys[0](domain.element(index));
+            let eval = ci(tgx, tx);
+            domain_evaluations[index] += eval;
+        }
+
+
+        // interpolate the C poly from the sum of the evaluations of ci(x)
+        // in practice there would be multiple polys spanning different rows of the trace etc.
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &extended_domain.ifft(&domain_evaluations),
         ));
 
+
         // test the evaluations (remove this in production), this checks that ci(gx, x) = c(x)
-        for (index, element) in extended_domain.elements().into_iter().enumerate() {
-            if index == extended_domain.size() - 2 {
-                break;
-            }
-            let c_eval = c_poly.evaluate(element);
-            let ci_eval = ci(
-                trace_polys.first().unwrap()(extended_domain.element(index + 1)),
-                trace_polys.first().unwrap()(element),
-            );
+        for index in 0..(extended_domain.size() - 1) {
+            let x = extended_domain.element(index);
+            let c_eval = c_poly.evaluate(x);
+            let ci_eval = ci_poly.evaluate(x) * Fr::from(2);
             println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
             assert_eq!(c_eval, ci_eval);
         }
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
-        // Divide to get quotient polynomial
+        // Divide to get quotient polynomial, which is a low-degree, non-zero polynomial
         let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
+
+        println!("quotient_poly: {:?}", quotient_poly);
+        println!("quotient_poly_size: {:?}", quotient_poly.coefficients.len());
+
         // Evaluate quotient polynomial over extended domain
         let mut q_evals: Vec<Fr> = extended_domain
             .elements()
@@ -147,7 +167,9 @@ impl StarkProver {
         let mut folding_commitment_trees: Vec<MerkleTree> = Vec::new();
         let mut fri_transcript = Vec::new();
 
-        while q_evals.len() > 4 {
+        // Number of layers: log2(N) - log2(d + 1), where d is the degree bound and N is the size of the trace
+        // note that low domain size (8) goes hand in hand with low degree, since degree N is
+        while q_evals.len() > 8 {
             // Add current layer to transcript
             for eval in &q_evals {
                 fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
@@ -158,8 +180,9 @@ impl StarkProver {
             let mut beta_bytes = [0u8; 32];
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
-
             fri_challenges.push(beta);
+
+            // Fold the evaluations
             q_evals = fri_fold(&q_evals, beta);
 
             // Create Merkle tree for this FRI layer
@@ -170,15 +193,12 @@ impl StarkProver {
                     .map(|x| x.into_bigint().to_bytes_be())
                     .collect(),
             );
+            // add the merkle tree to the proof transcript
             folding_commitment_trees.push(folding_step_merkle_tree);
             fri_layers.push(q_evals.clone());
         }
 
-        // Calculate optimal number of queries for 128-bit security
-        let total_fri_layers = fri_layers.len();
-        let optimal_queries = calculate_optimal_queries(total_fri_layers);
-        let constraint_queries = MIN_VERIFIER_QUERIES;
-        let total_queries = optimal_queries + constraint_queries;
+        // todo: generate fiat shamir challenges of sufficient size for the spot checks ci(gx, x) = c(x)
 
         StarkProof {
             quotient_eval_domain: vec![],
