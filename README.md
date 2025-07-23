@@ -48,6 +48,13 @@ Here the expected evaluation is ∑ci(x). For the fibonacci program we only have
   }
 ```
 
+> [!NOTE]
+> We are skipping fiat shamir on purpose to get the core polynomial math right.
+> Once the protocol itself is sound we will add fiat shamir where appropriate.
+> For now we have fixed challenges and are trying to not leak the trace values.
+
+
+
 # Theory: Security Properties
 STARKs achieve their security through a combination of domain extension, low-degree testing, and Merkle commitments. Here's how it works:
 
