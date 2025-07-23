@@ -41,7 +41,7 @@ impl StarkVerifier {
 
             let expected = fibonacci_constraint(ti2, ti1, ti0);
             println!("expected: {:?}", expected);
-            let actual = ci_poly.evaluate(domain.element(i));
+            let actual = ci_poly.evaluate(extended_domain.element(i));
 
             assert_eq!(expected, actual);
         }
