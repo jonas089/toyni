@@ -3,25 +3,16 @@ use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
+use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain};
 use rand::thread_rng;
-
-/// Calculate the optimal number of queries for 128-bit security
-fn calculate_optimal_queries(fri_layers: usize) -> usize {
-    let log_l = (fri_layers as f64).log2();
-    let optimal_queries = log_l + 128.0;
-    optimal_queries.ceil() as usize
-}
 
 fn random_poly(degree: usize) -> ToyniPolynomial {
     let mut rng = thread_rng();
     let coeffs: Vec<Fr> = (0..=degree).map(|_| Fr::rand(&mut rng)).collect();
     ToyniPolynomial::new(coeffs)
 }
-
-const MIN_VERIFIER_QUERIES: usize = 64;
 
 #[derive(Debug)]
 pub struct StarkProof {
@@ -57,7 +48,6 @@ impl StarkProver {
             trace_polys.push(poly);
         }
 
-        // Fibonacci constraint: a_{i+2} = a_{i+1} + a_{i}
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
@@ -75,28 +65,25 @@ impl StarkProver {
             &domain.ifft(&domain_evaluations),
         ));
 
-        //C(x) = α₁ * c₁(x) + α₂ * c₂(x) + ... + αₖ * cₖ(x)
-        let c_poly = ci_poly.clone();
+        let transcript_seed = digest_sha2(
+            &ci_poly
+                .coefficients
+                .iter()
+                .flat_map(|c| c.into_bigint().to_bytes_be())
+                .collect::<Vec<_>>(),
+        );
+        let mut alpha_bytes = [0u8; 32];
+        alpha_bytes.copy_from_slice(&transcript_seed[..32]);
+        let alpha = Fr::from_le_bytes_mod_order(&alpha_bytes);
 
-        println!("c_poly: {:?}", c_poly.coefficients);
-
-        for i in 0..(extended_domain.size() - 2) {
-            let x = extended_domain.element(i);
-            let c_eval = c_poly.evaluate(x);
-            let ci_eval = ci_poly.evaluate(x);
-            println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
-            assert_eq!(c_eval, ci_eval);
-        }
+        let c_poly = ci_poly.scale(alpha);
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
-        let r_poly = random_poly(2); // or higher degree if needed
+        let r_poly = random_poly(2);
         let c_z_poly = c_poly.add(&r_poly.mul(&z_poly));
 
         let (quotient_poly, _) = c_z_poly.divide(&z_poly).unwrap();
-
-        println!("quotient_poly: {:?}", quotient_poly);
-        println!("quotient_poly_size: {:?}", quotient_poly.coefficients.len());
 
         let mut q_evals: Vec<Fr> = extended_domain
             .elements()
@@ -134,11 +121,11 @@ impl StarkProver {
 
         StarkProof {
             quotient_eval_domain: vec![],
-            fri_layers: vec![],
-            fri_challenges: vec![],
-            combined_constraint: ToyniPolynomial::new(vec![Fr::from(0)]),
-            quotient_poly: ToyniPolynomial::new(vec![Fr::from(0)]),
-            folding_commitment_trees: vec![],
+            fri_layers,
+            fri_challenges,
+            combined_constraint: c_z_poly,
+            quotient_poly,
+            folding_commitment_trees,
             verifier_random_challenges: vec![],
         }
     }
@@ -146,7 +133,7 @@ impl StarkProver {
 
 #[cfg(test)]
 mod tests {
-    use crate::{program::trace::ExecutionTrace, prover::StarkProver};
+    use crate::{program::trace::ExecutionTrace, prover::StarkProver, verifier::StarkVerifier};
     use ark_bls12_381::Fr;
 
     #[test]
@@ -162,8 +149,9 @@ mod tests {
             Fr::from(13),
             Fr::from(21),
         ]);
-        let stark = StarkProver::new(execution_trace);
+        let stark = StarkProver::new(execution_trace.clone());
         let proof = stark.generate_proof();
-        println!("{:?}", proof);
+        let verifier = StarkVerifier::new(execution_trace.trace.len());
+        assert!(verifier.verify(&proof));
     }
 }

@@ -145,6 +145,11 @@ impl Polynomial {
     pub fn coefficients(&self) -> &[Fr] {
         &self.coefficients
     }
+
+    pub fn scale(&self, scalar: Fr) -> Self {
+        let scaled_coeffs: Vec<Fr> = self.coefficients.iter().map(|c| *c * scalar).collect();
+        Polynomial::new(scaled_coeffs)
+    }
 }
 
 impl fmt::Display for Polynomial {
