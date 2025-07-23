@@ -1,14 +1,15 @@
-use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
-use ark_poly::{
-    DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial,
-};
-
 use crate::{digest_sha2, math::polynomial::Polynomial, prover::StarkProof};
+use ark_bls12_381::Fr;
+use ark_ff::{BigInteger, Field, PrimeField};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
 pub struct StarkVerifier {
     trace_len: usize,
 }
+
+const CI_SPOT_CHECKS: usize = 8;
+const FOLDING_SPOT_CHECKS: usize = 64;
+const EXTENDED_DOMAIN_SIZE: usize = 64;
 
 impl StarkVerifier {
     pub fn new(trace_len: usize) -> Self {
@@ -17,53 +18,42 @@ impl StarkVerifier {
 
     pub fn verify(&self, proof: &StarkProof) -> bool {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
-        // Hardcoded alpha for now
-        //let alpha = Fr::from(7u64);
-
-        // Recompute Fibonacci constraint ci(x) over the domain
-        let elements: Vec<Fr> = domain.elements().collect();
-        let mut ci_evals = vec![Fr::ZERO; domain.size()];
-
-        for i in 0..(domain.size() - 2) {
-            let x0 = elements[i];
-            let x1 = elements[i + 1];
-            let x2 = elements[i + 2];
-
-            let a0 = proof.combined_constraint.evaluate(x0);
-            let a1 = proof.combined_constraint.evaluate(x1);
-            let a2 = proof.combined_constraint.evaluate(x2);
-
-            // ci(x) = a2 - (a1 + a0)
-            ci_evals[i] = a2 - (a1 + a0);
+        // should query random points over extended domain
+        // and assert ci(x) == fib(ggx, gx, x)
+        fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
+            ti2 - (ti1 + ti0)
+        }
+        let ci_poly = proof.constraint_polys.first().unwrap();
+        // check ci_poly correctness against fibonacci function
+        // currently we only check the first 8 points, but we should use fiat shamir for this
+        for i in 0..CI_SPOT_CHECKS {
+            let ti2 = ci_poly.evaluate(extended_domain.element(i + 2));
+            let ti1 = ci_poly.evaluate(extended_domain.element(i + 1));
+            let ti0 = ci_poly.evaluate(extended_domain.element(i));
+            let expected = fibonacci_constraint(ti2, ti1, ti0);
+            let actual = ci_poly.evaluate(extended_domain.element(i));
+            assert_eq!(expected, actual);
         }
 
-        let ci_poly = Polynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &domain.ifft(&ci_evals),
-        ));
-
-        let expected_c_poly = ci_poly; //.scale(alpha);
-
-        for i in 0..5 {
-            let x = elements[i];
-            let expected = expected_c_poly.evaluate(x);
-            let actual = proof.combined_constraint.evaluate(x);
-
-            println!("expected: {:?}, actual: {:?}", expected, actual);
-
-            if expected != actual {
-                println!(
-                    "❌ combined_constraint(x) != α * ci(x) at i={}: {} != {}",
-                    i, actual, expected
-                );
-                return false;
+        let mut ci_transcript = Vec::new();
+        for tree in &proof.folding_commitment_trees {
+            if let Some(root) = tree.root() {
+                ci_transcript.extend_from_slice(&root);
             }
         }
+        for coeff in proof.combined_constraint.coefficients() {
+            ci_transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
+        }
+
+        let seed = digest_sha2(&ci_transcript);
+        let mut seed_bytes = [0u8; 32];
+        seed_bytes.copy_from_slice(&seed[..32]);
 
         // Fiat-Shamir random point checks: Q(x)·Z(x) == C(x)
         let verifier_transcript = build_verifier_transcript(
-            &proof.quotient_eval_domain,
             &proof.fri_layers,
             &proof.fri_challenges,
             &proof.combined_constraint,
@@ -71,7 +61,7 @@ impl StarkVerifier {
         );
         let verifier_hash = digest_sha2(&verifier_transcript);
 
-        for i in 0..64 {
+        for i in 0..FOLDING_SPOT_CHECKS {
             let mut challenge_bytes = [0u8; 32];
             let hash_offset = (i * 32) % verifier_hash.len();
             let bytes_to_copy = std::cmp::min(32, verifier_hash.len() - hash_offset);
@@ -117,7 +107,7 @@ impl StarkVerifier {
             let half_n = current_layer.len() / 2;
 
             // maximum domain size is 64
-            assert!(current_layer.len() < 65);
+            assert!(current_layer.len() < EXTENDED_DOMAIN_SIZE + 1);
 
             if next_layer.len() != half_n {
                 println!(
@@ -167,17 +157,12 @@ impl StarkVerifier {
 }
 
 fn build_verifier_transcript(
-    quotient_eval_domain: &[Fr],
     fri_layers: &[Vec<Fr>],
     fri_challenges: &[Fr],
     combined_constraint: &Polynomial,
     folding_commitment_trees: &[crate::merkle::MerkleTree],
 ) -> Vec<u8> {
     let mut transcript = Vec::new();
-
-    for eval in quotient_eval_domain {
-        transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
-    }
 
     for layer in fri_layers {
         for eval in layer {

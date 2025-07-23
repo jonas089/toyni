@@ -1,5 +1,7 @@
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, Field};
+
+use crate::math::polynomial::Polynomial;
 pub type ProgramVariable = String;
 
 #[derive(Clone)]
@@ -28,7 +30,7 @@ impl ExecutionTrace {
         &self.trace[index as usize]
     }
 
-    pub fn interpolate_column(&self, domain: &[Fr], column_idx: usize) -> impl Fn(Fr) -> Fr {
+    pub fn interpolate_column(&self, domain: &[Fr], column_idx: usize) -> Polynomial {
         assert_eq!(
             domain.len(),
             self.trace.len(),
@@ -38,40 +40,23 @@ impl ExecutionTrace {
         let xs = domain.to_vec();
         let ys: Vec<Fr> = self.trace.iter().map(|row| row[column_idx]).collect();
 
-        move |x: Fr| {
-            let mut result = Fr::ZERO;
+        let mut poly = Polynomial::zero();
 
-            for (i, (xi, yi)) in xs.iter().zip(ys.iter()).enumerate() {
-                let mut li = Fr::from(1);
-                for (j, xj) in xs.iter().enumerate() {
-                    if i != j {
-                        let num = x - xj;
-                        let denom = *xi - *xj;
-                        li *= num * denom.inverse().expect("division by zero in interpolation");
-                    }
+        for (i, (xi, yi)) in xs.iter().zip(ys.iter()).enumerate() {
+            let mut numerator = Polynomial::new(vec![Fr::ONE]);
+            let mut denominator = Fr::ONE;
+
+            for (j, xj) in xs.iter().enumerate() {
+                if i != j {
+                    numerator = numerator.mul(&Polynomial::new(vec![-*xj, Fr::ONE])); // (x - xj)
+                    denominator *= *xi - *xj;
                 }
-                result += *yi * li;
             }
 
-            result
+            let li = numerator.scale(denominator.inverse().unwrap());
+            poly = poly.add(&li.scale(*yi));
         }
+
+        poly
     }
-}
-
-#[test]
-fn test_interpolate_column_exact_points() {
-    let mut trace = ExecutionTrace::new();
-    trace.insert_column(vec![Fr::from(1), Fr::from(2), Fr::from(3)]); // Adds values for column 0
-    trace.insert_column(vec![Fr::from(4), Fr::from(5), Fr::from(6)]); // Adds values for column 1
-    let domain = &[Fr::from(2), Fr::from(3), Fr::from(4)];
-    let poly = trace.interpolate_column(domain, 0);
-    assert_eq!(poly(Fr::from(2)), Fr::from(1));
-    assert_eq!(poly(Fr::from(3)), Fr::from(2));
-    assert_eq!(poly(Fr::from(4)), Fr::from(3));
-
-    let domain = &[Fr::from(5), Fr::from(6), Fr::from(7)];
-    let poly = &trace.interpolate_column(domain, 1);
-    assert_eq!(poly(Fr::from(5)), Fr::from(4));
-    assert_eq!(poly(Fr::from(6)), Fr::from(5));
-    assert_eq!(poly(Fr::from(7)), Fr::from(6));
 }

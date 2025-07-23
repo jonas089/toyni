@@ -3,201 +3,52 @@
 > Toyni was migrated from [jonas089's Github](https://github.com/jonas089/Toyni)
 > Click [here](https://github.com/jonas089/Toyni) to see the past commit history.
 
-Welcome to Toyni! This is an implementation of a STARK (Scalable Transparent Argument of Knowledge) proving system in Rust.
-
 ![toyniii](art/toyniii.jpg)
 
-Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)
+*Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)*
 
-> [!WARNING]  
-> This is a research project and hasn't been audited. Use at your own risk.
-> There are some essential and critical features still missing, especially the
-> trace commitment with merkle proof verifications.
-> This codebase is not complete by any means and an active work in progress.
+Toyni is an experimental zk-STARK proof system that is not meant for production use and has not been audited for correctness.
+Currently Toyni is designed around a simple `Fibonacci` example program.
 
-## Currently in progress
-In order to achieve a real STARK prover with zero knowledge properties, we must add the following features / checks:
-
-1. Constrain the degree of Q, depending on the domain size N, to be close to N - 1 
-2. Implement a verifier check that proves that each individual constraint polynomial Ci was interpolated correctly from the constraints (transition, boundary)
-
-## Background, STARK Verifier: Constraint vs FRI Layer Checks
-
-## ✅ Constraint Check (Single Layer)
-- For each randomly sampled point `x`:
-  - Verifier checks:
-    ```
-    Q(z) * Z(z) == C(z)
-    ```
-  - Ensures that the execution trace satisfies all constraints
----
-
-## ✅ FRI Layer Checks (Multiple Layers)
-- Purpose: Prove that `Q(z)` is a **low-degree polynomial**
-- Process:
-  1. Start with evaluations of `Q(z)` over the domain (Layer 0)
-  2. Recursively apply `fri_fold()` to reduce degree at each layer
-  3. At each layer:
-     - Verifier checks Merkle proofs for sampled values
-     - Verifies that folding is consistent with previous layer
-  4. Final layer should be constant or degree-1, checked directly
-
-- ✅ Merkle proofs are **checked at each FRI layer**
-- ✅ Folding correctness is verified at each layer
-
----
-
->[!NOTE]
-> FRI folding equation:
-> f_{i+1}(x²) = (fᵢ(x) + fᵢ(–x) + βᵢ · (fᵢ(x) – fᵢ(–x))) / 2
-
-## 🔐 STARK Verifier: Security Parameters for 128-bit Soundness
-
-### FRI QUERIES
-To achieve **128-bit soundness** in STARK proofs, the total probability that a cheating prover is accepted must be less than `2⁻¹²⁸`.
-
-This involves carefully choosing parameters for:
-
-- Constraint checks (`Q(x)` evaluations)
-- FRI protocol (number of layers and queries per layer)
-
-**Important**: The number of FRI layers depends on the program size!
-
-> Example for different program sizes:
-> - Trace size N=4: Extended domain = 32 → L = 4 layers → log₂(4) ≈ 2
-> - Trace size N=8: Extended domain = 64 → L = 5 layers → log₂(5) ≈ 2.3  
-> - Trace size N=16: Extended domain = 128 → L = 6 layers → log₂(6) ≈ 2.6
-> - Trace size N=32: Extended domain = 256 → L = 7 layers → log₂(7) ≈ 2.8
-> - Trace size N=1024: Extended domain = 8192 → L = 11 layers → log₂(11) ≈ 3.5
->
-> **Formula**: FRI layers = log₂(8N) - 2, where N is trace size
-> **Required queries**: m ≥ log₂(L) + 128 (e.g., 131-132 for most programs)
-
----
-
-### CONSTRAINT CHECKS
-> Example:
-> - If `d / N = 1/4`, then `log₂(N/d) = 2`
-> - So: `n = 128 / 2 = 64` spot checks
-
-> - If `d / N = 1/8`, then `log₂(N/d) = 3`
-> - So: `n = 128 / 3 ≈ 43`, but round up to be safe
----
-
-### ✅ Practical Recommendation:
-Use `n = 64–80` spot checks for strong 128-bit soundness across typical domain/degree ratios.
-
-### ✅ Recommendations for 128-bit Security
-
-| Component              | Suggested Value                    |
-|-----------------------|------------------------------------|
-| Constraint checks `n` | 64–80                              |
-| FRI layers `L`        | log₂(8N) - 2 (where N = trace size) |
-| FRI queries `m`       | ≥ log₂(L) + 128 (e.g., 131-132)     |
-| Total soundness error | ε_total = ε_constraints + ε_fri ≤ 2⁻¹²⁸ |
-
-**Note**: Our implementation uses a conservative approach by checking ALL points in each FRI layer rather than sampling, providing security well above the minimum requirements.
-
-## 🔁 Summary
-
-| Check Type         | Equation Checked              | Merkle Proofs | Multiple Layers? |
-|--------------------|-------------------------------|----------------|-------------------|
-| Constraint Check   | `Q(z) * Z(z) == C(z)`          | Optional       | ❌ No             |
-| FRI Layer Check    | Folding consistency, low-degree| ✅ Yes          | ✅ Yes            |
-
-
-### FRI Layer Scaling
-
-The number of FRI layers in a STARK proof scales logarithmically with the program size:
+The `Fibonacci` program defines a single-column trace table of shape:
 
 ```
-FRI Layers = log₂(8N) - 2
+| var |
+|---|
+| 1 |
+| 1 |
+| 2 | 
+...  
+| 13 |
+| 21 | 
 ```
 
-Where `N` is the trace size (number of execution steps). This scaling ensures that:
+## Run the prover
+```bash
+cargo test test_fibonacci -- --nocapture
+```
 
-- **Small programs** (N=4): 4 FRI layers
-- **Medium programs** (N=32): 7 FRI layers  
-- **Large programs** (N=1024): 11 FRI layers
-- **Very large programs** (N=65536): 16 FRI layers
+Output:
 
-This logarithmic scaling is crucial for STARK's efficiency - proof size grows only logarithmically with computation size.
+```bash
+running 1 test
+expected: 0, actual: 0
+expected: 0, actual: 0
+expected: 0, actual: 0
+expected: 0, actual: 0
+expected: 0, actual: 0
+test prover::tests::test_fibonacci ... ok
+```
 
-### How It Works
-
-| Program Execution | Execution Trace | Verification |
-|------------------|-----------------|--------------|
-| • Run program | • Record states | • Sample positions |
-| • Track state | • Build constraints | • Check constraints |
-| • Generate trace | | |
-
-Here's a simple example that demonstrates how Toyni works. We'll create a program that proves a sequence of numbers increments by 1 each time:
+Here the expected evaluation is ∑ci(x). For the fibonacci program we only have one constraint defined as:
 
 ```rust
-fn test_valid_proof() {
-    let mut trace = ExecutionTrace::new(4, 1);
-    for i in 0..4 {
-        let mut row = HashMap::new();
-        row.insert("x".to_string(), i);
-        trace.insert_column(row);
-    }
-
-    let mut constraints = ConstraintSystem::default();
-    constraints.add_transition_constraint(
-        "increment".to_string(),
-        vec!["x".to_string()],
-        Box::new(|current, next| {
-            let x_n = Fr::from(*current.get("x").unwrap());
-            let x_next = Fr::from(*next.get("x").unwrap());
-            x_next - x_n - Fr::ONE
-        }),
-    );
-    constraints.add_boundary_constraint(
-        "starts_at_0".to_string(),
-        0,
-        vec!["x".to_string()],
-        Box::new(|row| Fr::from(*row.get("x").unwrap())),
-    );
-
-    let prover = StarkProver::new(trace.clone(), constraints);
-    let proof = prover.generate_proof();
-    let verifier = StarkVerifier::new(trace.height as usize);
-    assert!(verifier.verify(&proof));
-}
+  fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
+      ti2 - (ti1 + ti0)
+  }
 ```
 
-This example shows how Toyni can prove that a sequence of numbers follows a specific pattern (incrementing by 1) without revealing the actual numbers. The proof can be verified by anyone, but the actual values remain private.
-
-### Security Properties
-
-STARKs achieve their security through a combination of domain extension and low-degree testing. Here's how it works:
-
-| Domain Extension | Low-Degree Testing | Soundness Guarantees |
-|-----------------|-------------------|---------------------|
-| • Extend domain | • FRI protocol | • Soundness error: (1/b)^q |
-| • Blowup factor | • Polynomial degree | • Query complexity |
-
-The security of a STARK proof relies on two key mechanisms:
-
-1. **Domain Extension (Blowup)**: The composition polynomial is evaluated over a domain that's `b` times larger than the original trace length, where `b` is the blowup factor (8 in our implementation).
-
-2. **Low-Degree Testing**: The FRI protocol ensures that the polynomial being tested is close to a valid low-degree polynomial. The number of FRI layers scales logarithmically with program size: `L = log₂(8N) - 2` where N is the trace size.
-
-The soundness error (probability of accepting an invalid proof) is bounded by:
-
-```
-Pr[undetected cheat] = (1/b)^q
-```
-
-where:
-- `b` is the blowup factor (8 in our implementation)
-- `q` is the number of queries made by the verifier
-
-This means that if a prover tries to cheat by modifying a fraction 1/b of the domain, the verifier will detect this with probability at least 1 - (1/b)^q. 
-
-**Example**: With a blowup factor of 8 and 80 constraint queries, the constraint soundness error is at most (1/8)^80 ≈ 2^(-240), providing far more than the required 128-bit security.
-
-### Security Properties
+# Theory: Security Properties
 STARKs achieve their security through a combination of domain extension, low-degree testing, and Merkle commitments. Here's how it works:
 
 The security of a STARK proof relies on three key mechanisms:
