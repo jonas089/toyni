@@ -1,4 +1,8 @@
-use crate::{digest_sha2, math::polynomial::Polynomial, prover::StarkProof};
+use crate::{
+    digest_sha2,
+    math::polynomial::Polynomial,
+    prover::{CI_SPOT_CHECKS, StarkProof},
+};
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, Field, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
@@ -7,9 +11,8 @@ pub struct StarkVerifier {
     trace_len: usize,
 }
 
-const CI_SPOT_CHECKS: usize = 8;
 const FOLDING_SPOT_CHECKS: usize = 64;
-const EXTENDED_DOMAIN_SIZE: usize = 64;
+const EXTENDED_DOMAIN_SIZE: usize = 128;
 
 impl StarkVerifier {
     pub fn new(trace_len: usize) -> Self {
@@ -27,14 +30,19 @@ impl StarkVerifier {
             ti2 - (ti1 + ti0)
         }
         let ci_poly = proof.constraint_polys.first().unwrap();
+
         // check ci_poly correctness against fibonacci function
         // currently we only check the first 8 points, but we should use fiat shamir for this
         for i in 0..CI_SPOT_CHECKS {
-            let ti2 = ci_poly.evaluate(extended_domain.element(i + 2));
-            let ti1 = ci_poly.evaluate(extended_domain.element(i + 1));
-            let ti0 = ci_poly.evaluate(extended_domain.element(i));
+            let trace_at_spot = proof.trace_spot_checks[i];
+            let ti0 = trace_at_spot[0];
+            let ti1 = trace_at_spot[1];
+            let ti2 = trace_at_spot[2];
+
             let expected = fibonacci_constraint(ti2, ti1, ti0);
-            let actual = ci_poly.evaluate(extended_domain.element(i));
+            println!("expected: {:?}", expected);
+            let actual = ci_poly.evaluate(domain.element(i));
+
             assert_eq!(expected, actual);
         }
 
@@ -106,7 +114,7 @@ impl StarkVerifier {
         {
             let half_n = current_layer.len() / 2;
 
-            // maximum domain size is 64
+            // maximum domain size is 128
             assert!(current_layer.len() < EXTENDED_DOMAIN_SIZE + 1);
 
             if next_layer.len() != half_n {

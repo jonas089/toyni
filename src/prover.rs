@@ -15,6 +15,8 @@ fn random_poly(degree: usize) -> ToyniPolynomial {
     ToyniPolynomial::new(coeffs)
 }
 
+pub const CI_SPOT_CHECKS: usize = 8;
+
 #[derive(Debug)]
 pub struct StarkProof {
     pub fri_layers: Vec<Vec<Fr>>,
@@ -22,6 +24,7 @@ pub struct StarkProof {
     pub combined_constraint: ToyniPolynomial,
     pub quotient_poly: ToyniPolynomial,
     pub folding_commitment_trees: Vec<MerkleTree>,
+    pub trace_spot_checks: [[Fr; 3]; CI_SPOT_CHECKS],
     pub constraint_polys: Vec<ToyniPolynomial>,
 }
 
@@ -55,8 +58,9 @@ impl StarkProver {
             domain_evaluations[i] = fibonacci_constraint(ti2, ti1, ti0);
         }
         let ci_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &extended_domain.ifft(&domain_evaluations),
+            &domain.ifft(&domain_evaluations),
         ));
+
         let transcript_seed = digest_sha2(
             &ci_poly
                 .coefficients()
@@ -108,12 +112,23 @@ impl StarkProver {
             fri_layers.push(q_evals.clone());
         }
 
+        // spot check the first N points
+        let mut trace_spot_checks = [[Fr::ZERO; 3]; CI_SPOT_CHECKS];
+        for i in 0..CI_SPOT_CHECKS {
+            trace_spot_checks[i] = [
+                trace_polys[0].evaluate(domain.element(i)),
+                trace_polys[0].evaluate(domain.element(i + 1)),
+                trace_polys[0].evaluate(domain.element(i + 2)),
+            ];
+        }
+
         StarkProof {
             fri_layers,
             fri_challenges,
             combined_constraint: c_poly,
             quotient_poly,
             folding_commitment_trees,
+            trace_spot_checks,
             constraint_polys: vec![ci_poly],
         }
     }
@@ -136,6 +151,14 @@ mod tests {
             Fr::from(8),
             Fr::from(13),
             Fr::from(21),
+            Fr::from(34),
+            Fr::from(55),
+            Fr::from(89),
+            Fr::from(144),
+            Fr::from(233),
+            Fr::from(377),
+            Fr::from(610),
+            Fr::from(987),
         ]);
         let stark = StarkProver::new(execution_trace.clone());
         let proof = stark.generate_proof();
