@@ -1,5 +1,5 @@
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, Field};
+use ark_ff::Field;
 
 use crate::math::polynomial::Polynomial;
 pub type ProgramVariable = String;

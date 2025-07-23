@@ -113,6 +113,8 @@ impl StarkProver {
         }
 
         // spot check the first N points
+        // todo: build a merkle tree from the evaluations and use fiat shamir
+        // to reveal part of the trace without a clear context / position
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CI_SPOT_CHECKS];
         for i in 0..CI_SPOT_CHECKS {
             trace_spot_checks[i] = [
