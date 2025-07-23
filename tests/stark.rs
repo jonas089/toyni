@@ -5,7 +5,6 @@ mod tests {
 
     #[test]
     fn test_constraint_poly() {
-        let trace = vec![2, 4, 16];
         let mut execution_trace = ExecutionTrace::new();
         execution_trace.insert_column(vec![
             Fr::from(2),

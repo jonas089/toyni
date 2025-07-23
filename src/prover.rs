@@ -104,22 +104,20 @@ impl StarkProver {
         }
 
         // last row has no next, so n - 1
-        let mut extended_domain_trace_evaluations: Vec<Fr> =
+        let mut extended_domain_constraint_evaluations: Vec<Fr> =
             vec![Fr::ZERO; extended_domain.size() - 1];
 
         // iterate over the domain elements pairwise and compute ci(x, y)
-        for index in 0..extended_domain_trace_evaluations.len() - 1 {
-            let tgx = extended_domain.element(index + 1);
-            let tx = extended_domain.element(index);
+        for index in 0..extended_domain_constraint_evaluations.len() - 1 {
+            let tgx = trace_polys.first().unwrap()(extended_domain.element(index + 1));
+            let tx = trace_polys.first().unwrap()(extended_domain.element(index));
             let eval = ci(tgx, tx);
-            extended_domain_trace_evaluations[index] = eval;
+            extended_domain_constraint_evaluations[index] = eval;
         }
 
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &extended_domain.ifft(&extended_domain_trace_evaluations),
+            &extended_domain.ifft(&extended_domain_constraint_evaluations),
         ));
-
-        println!("c_poly: {:?}", c_poly);
 
         // test the evaluations (remove this in production), this checks that ci(gx, x) = c(x)
         for (index, element) in extended_domain.elements().into_iter().enumerate() {
@@ -127,15 +125,27 @@ impl StarkProver {
                 break;
             }
             let c_eval = c_poly.evaluate(element);
-            let ci_eval = ci(extended_domain.element(index + 1), element);
+            let ci_eval = ci(
+                trace_polys.first().unwrap()(extended_domain.element(index + 1)),
+                trace_polys.first().unwrap()(element),
+            );
+            //println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
             assert_eq!(c_eval, ci_eval);
+        }
+
+        for (index, element) in domain.elements().into_iter().enumerate() {
+            if index == domain.size() - 2 {
+                break;
+            }
+            let c_eval = c_poly.evaluate(element);
+            let ci_eval = ci(domain.element(index + 1), element);
+            println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
         }
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
         // Divide to get quotient polynomial
         let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
-
         // Evaluate quotient polynomial over extended domain
         let mut q_evals: Vec<Fr> = extended_domain
             .elements()
