@@ -129,17 +129,8 @@ impl StarkProver {
                 trace_polys.first().unwrap()(extended_domain.element(index + 1)),
                 trace_polys.first().unwrap()(element),
             );
-            //println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
-            assert_eq!(c_eval, ci_eval);
-        }
-
-        for (index, element) in domain.elements().into_iter().enumerate() {
-            if index == domain.size() - 2 {
-                break;
-            }
-            let c_eval = c_poly.evaluate(element);
-            let ci_eval = ci(domain.element(index + 1), element);
             println!("c_eval: {:?}, ci_eval: {:?}", c_eval, ci_eval);
+            assert_eq!(c_eval, ci_eval);
         }
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
