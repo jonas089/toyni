@@ -3,7 +3,7 @@ use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain};
 use rand::thread_rng;
@@ -67,16 +67,16 @@ impl StarkProver {
 
         let transcript_seed = digest_sha2(
             &ci_poly
-                .coefficients
+                .coefficients()
                 .iter()
                 .flat_map(|c| c.into_bigint().to_bytes_be())
                 .collect::<Vec<_>>(),
         );
         let mut alpha_bytes = [0u8; 32];
         alpha_bytes.copy_from_slice(&transcript_seed[..32]);
-        let alpha = Fr::from_le_bytes_mod_order(&alpha_bytes);
+        //let alpha = Fr::from_le_bytes_mod_order(&alpha_bytes);
 
-        let c_poly = ci_poly.scale(alpha);
+        let c_poly = ci_poly; //.scale(alpha);
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
 
