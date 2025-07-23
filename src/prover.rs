@@ -116,9 +116,9 @@ impl StarkProver {
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CI_SPOT_CHECKS];
         for i in 0..CI_SPOT_CHECKS {
             trace_spot_checks[i] = [
-                trace_polys[0].evaluate(extended_domain.element(i)),
-                trace_polys[0].evaluate(extended_domain.element(i + 1)),
-                trace_polys[0].evaluate(extended_domain.element(i + 2)),
+                trace_polys[0].evaluate(domain.element(i)),
+                trace_polys[0].evaluate(domain.element(i + 1)),
+                trace_polys[0].evaluate(domain.element(i + 2)),
             ];
         }
 

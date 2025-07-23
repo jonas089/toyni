@@ -33,6 +33,8 @@ impl StarkVerifier {
 
         // check ci_poly correctness against fibonacci function
         // currently we only check the first 8 points, but we should use fiat shamir for this
+        // sadly this method currently only works for the orginal domain,
+        // meaning we are leaking trace values :( - must find a way to fix this!
         for i in 0..CI_SPOT_CHECKS {
             let trace_at_spot = proof.trace_spot_checks[i];
             let ti0 = trace_at_spot[0];
@@ -41,7 +43,7 @@ impl StarkVerifier {
 
             let expected = fibonacci_constraint(ti2, ti1, ti0);
             println!("expected: {:?}", expected);
-            let actual = ci_poly.evaluate(extended_domain.element(i));
+            let actual = ci_poly.evaluate(domain.element(i));
 
             assert_eq!(expected, actual);
         }
