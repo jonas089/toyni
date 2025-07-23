@@ -35,8 +35,7 @@ impl StarkVerifier {
         // currently we only check the first 8 points, but we should use fiat shamir for this
         // sadly this method currently only works for the orginal domain,
         // meaning we are leaking trace values :( - must find a way to fix this!
-        // update: currently it looks like we have to "leak" some values but we can mask their location and the
-        // number of required spot checks is minimal.
+
         for i in 0..CI_SPOT_CHECKS {
             let trace_at_spot = proof.trace_spot_checks[i];
             let ti0 = trace_at_spot[0];
