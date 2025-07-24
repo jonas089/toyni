@@ -86,6 +86,21 @@ impl Polynomial {
         Polynomial::new(result)
     }
 
+    pub fn sub(&self, other: &Polynomial) -> Polynomial {
+        let max_len = std::cmp::max(self.coefficients.len(), other.coefficients.len());
+        let mut result = vec![Fr::zero(); max_len];
+
+        for i in 0..self.coefficients.len() {
+            result[i] = self.coefficients[i];
+        }
+
+        for i in 0..other.coefficients.len() {
+            result[i] -= other.coefficients[i];
+        }
+
+        Polynomial::new(result)
+    }
+
     pub fn multiply(&self, other: &Polynomial) -> Polynomial {
         if self.coefficients.is_empty() || other.coefficients.is_empty() {
             return Polynomial::new(vec![]);

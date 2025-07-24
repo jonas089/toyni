@@ -26,6 +26,7 @@ pub struct StarkProof {
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CI_SPOT_CHECKS],
     pub constraint_polys: Vec<ToyniPolynomial>,
+    pub r_poly: ToyniPolynomial,
 }
 
 pub struct StarkProver {
@@ -42,11 +43,14 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let domain_slice: Vec<Fr> = domain.elements().collect();
+
         let mut trace_polys = Vec::new();
+
         for column_idx in 0..self.trace.trace[0].len() {
             let poly = self.trace.interpolate_column(&domain_slice, column_idx);
             trace_polys.push(poly);
         }
+
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
@@ -73,8 +77,8 @@ impl StarkProver {
 
         let c_poly = ci_poly.clone(); //.scale(alpha);
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        //let r_poly = random_poly(2);
-        //let c_z_poly = c_poly.add(&r_poly.mul(&z_poly));
+        let r_poly = random_poly(2);
+        let c_z_poly = c_poly.add(&r_poly.mul(&z_poly));
 
         let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
 
@@ -127,11 +131,12 @@ impl StarkProver {
         StarkProof {
             fri_layers,
             fri_challenges,
-            combined_constraint: c_poly,
+            combined_constraint: c_z_poly,
             quotient_poly,
             folding_commitment_trees,
             trace_spot_checks,
             constraint_polys: vec![ci_poly],
+            r_poly,
         }
     }
 }

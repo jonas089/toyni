@@ -23,7 +23,7 @@ impl StarkVerifier {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
-
+        let c_poly = proof.combined_constraint.sub(&proof.r_poly.mul(&z_poly));
         // should query random points over extended domain
         // and assert ci(x) == fib(ggx, gx, x)
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
@@ -43,7 +43,6 @@ impl StarkVerifier {
             let ti2 = trace_at_spot[2];
 
             let expected = fibonacci_constraint(ti2, ti1, ti0);
-            println!("expected: {:?}", expected);
             let actual = ci_poly.evaluate(domain.element(i));
 
             assert_eq!(expected, actual);
@@ -82,7 +81,7 @@ impl StarkVerifier {
 
             let q_eval = proof.quotient_poly.evaluate(x);
             let z_eval = z_poly.evaluate(x);
-            let c_eval = proof.combined_constraint.evaluate(x);
+            let c_eval = c_poly.evaluate(x);
 
             if q_eval * z_eval != c_eval {
                 println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");
