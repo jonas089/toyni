@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
 use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
@@ -25,6 +27,7 @@ pub struct StarkProof {
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
+    pub coset_offset: Fr,
 }
 
 pub struct StarkProver {
@@ -42,6 +45,19 @@ impl StarkProver {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let domain_slice: Vec<Fr> = domain.elements().collect();
 
+        let offset = Fr::from(7);
+        let coset_lde_domain: Vec<Fr> = extended_domain.elements().map(|x| x * offset).collect();
+
+        let extended_points = coset_lde_domain.clone().into_iter().collect::<Vec<Fr>>();
+
+        // ensure that the extended domain does not cycle back on the original
+        let overlap = domain
+            .elements()
+            .collect::<HashSet<_>>()
+            .intersection(&coset_lde_domain.into_iter().collect())
+            .count();
+        assert_eq!(overlap, 0);
+
         let mut trace_polys = Vec::new();
 
         for column_idx in 0..self.trace.trace[0].len() {
@@ -56,34 +72,28 @@ impl StarkProver {
         let trace_poly = self
             .trace
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
-        let extended_points = extended_domain.elements().collect::<Vec<Fr>>();
-
-        /*let trace_lde = extended_points
-        .iter()
-        .map(|x| trace_poly.evaluate(*x))
-        .collect::<Vec<Fr>>();*/
 
         let z_poly = domain.vanishing_polynomial();
-
         let g = extended_domain.group_gen();
 
         let quotient_points: Vec<Fr> = extended_points
             .iter()
             .map(|&w| {
                 let z = z_poly.evaluate(&w);
-                if z == Fr::ZERO {
-                    Fr::ZERO // or panic/assert if this should never happen
-                } else {
-                    let t0 = trace_poly.evaluate(w);
-                    let t1 = trace_poly.evaluate(g * w);
-                    let t2 = trace_poly.evaluate(g * g * w);
-                    fibonacci_constraint(t2, t1, t0) / z
-                }
+                assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
+                let t0 = trace_poly.evaluate(w);
+                let t1 = trace_poly.evaluate(g * w);
+                let t2 = trace_poly.evaluate(g * g * w);
+                fibonacci_constraint(t2, t1, t0) / z
             })
             .collect();
 
-        let quotient_poly =
-            DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&quotient_points));
+        let mut coeffs = extended_domain.ifft(&quotient_points);
+        for (i, coeff) in coeffs.iter_mut().enumerate() {
+            *coeff *= offset.pow([i as u64]);
+        }
+
+        let quotient_poly = DensePolynomial::from_coefficients_slice(&coeffs);
 
         let mut q_evals = quotient_points.clone();
 
@@ -122,12 +132,13 @@ impl StarkProver {
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let t0 = trace_poly.evaluate(extended_domain.element(i));
-            let t1 = trace_poly.evaluate(extended_domain.element(i + 1));
-            let t2 = trace_poly.evaluate(extended_domain.element(i + 2));
+            let x = extended_domain.element(i) * offset;
+            let t0 = trace_poly.evaluate(x);
+            let t1 = trace_poly.evaluate(g * x);
+            let t2 = trace_poly.evaluate(g * g * x);
             trace_spot_checks[i] = [t0, t1, t2];
 
-            constraint_spot_checks[i] = fibonacci_constraint(t2, t1, t0)
+            constraint_spot_checks[i] = fibonacci_constraint(t2, t1, t0);
         }
 
         StarkProof {
@@ -137,6 +148,7 @@ impl StarkProver {
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
+            coset_offset: offset,
         }
     }
 }

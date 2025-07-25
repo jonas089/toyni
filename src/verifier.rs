@@ -4,7 +4,7 @@ use crate::{
     prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
 };
 use ark_bls12_381::Fr;
-use ark_ff::{BigInteger, Field, PrimeField};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
 pub struct StarkVerifier {
@@ -55,34 +55,24 @@ impl StarkVerifier {
                 ci_transcript.extend_from_slice(&root);
             }
         }
-        /*for coeff in proof.combined_constraint.coefficients() {
-            ci_transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
-        }
 
         let seed = digest_sha2(&ci_transcript);
         let mut seed_bytes = [0u8; 32];
         seed_bytes.copy_from_slice(&seed[..32]);
 
-        // Fiat-Shamir random point checks: Q(x)·Z(x) == C(x)
-        let verifier_transcript = build_verifier_transcript(
-            &proof.fri_layers,
-            &proof.fri_challenges,
-            &proof.folding_commitment_trees,
-        );
-        let verifier_hash = digest_sha2(&verifier_transcript);
-
-        for i in 0..FOLDING_SPOT_CHECKS {
-            let mut challenge_bytes = [0u8; 32];
-            let hash_offset = (i * 32) % verifier_hash.len();
-            let bytes_to_copy = std::cmp::min(32, verifier_hash.len() - hash_offset);
-            challenge_bytes[..bytes_to_copy]
-                .copy_from_slice(&verifier_hash[hash_offset..hash_offset + bytes_to_copy]);
-            let x = Fr::from_le_bytes_mod_order(&challenge_bytes);
-
+        for i in 0..CONSTRAINT_SPOT_CHECKS {
+            let x = extended_domain.element(i) * proof.coset_offset;
             let q_eval = proof.quotient_poly.evaluate(x);
             let z_eval = z_poly.evaluate(x);
-            let c_eval = c_poly.evaluate(x);
+            let c_eval = *proof.constraint_spot_checks.get(i).unwrap();
 
+            println!(
+                "q: {:?}, z: {:?}, c: {:?}, rem: {:?}",
+                q_eval,
+                z_eval,
+                c_eval,
+                c_eval - z_eval * q_eval
+            );
             if q_eval * z_eval != c_eval {
                 println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");
                 return false;
@@ -96,7 +86,7 @@ impl StarkVerifier {
         ) {
             println!("❌ FRI folding consistency check failed");
             return false;
-        }*/
+        }
 
         true
     }
