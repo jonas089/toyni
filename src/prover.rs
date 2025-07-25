@@ -1,15 +1,10 @@
-use std::collections::HashSet;
-
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
-use ark_poly::univariate::DensePolynomial;
-use ark_poly::{
-    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
-};
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
 
 #[allow(dead_code)]

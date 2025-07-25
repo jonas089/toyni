@@ -4,7 +4,7 @@ use crate::{
     prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
 };
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
+use ark_ff::{BigInteger, Field, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
 pub struct StarkVerifier {
