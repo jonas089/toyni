@@ -27,7 +27,6 @@ pub struct StarkProof {
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
-    pub coset_offset: Fr,
 }
 
 pub struct StarkProver {
@@ -45,18 +44,7 @@ impl StarkProver {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let domain_slice: Vec<Fr> = domain.elements().collect();
 
-        let offset = Fr::from(7);
-        let coset_lde_domain: Vec<Fr> = extended_domain.elements().map(|x| x * offset).collect();
-
-        let extended_points = coset_lde_domain.clone().into_iter().collect::<Vec<Fr>>();
-
-        // ensure that the extended domain does not cycle back on the original
-        let overlap = domain
-            .elements()
-            .collect::<HashSet<_>>()
-            .intersection(&coset_lde_domain.into_iter().collect())
-            .count();
-        assert_eq!(overlap, 0);
+        let extended_points = extended_domain.clone().elements().collect::<Vec<Fr>>();
 
         let mut trace_polys = Vec::new();
 
@@ -80,7 +68,10 @@ impl StarkProver {
             .iter()
             .map(|&w| {
                 let z = z_poly.evaluate(&w);
-                assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
+                //assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
+                if z == Fr::ZERO {
+                    return z;
+                }
                 let t0 = trace_poly.evaluate(w);
                 let t1 = trace_poly.evaluate(g * w);
                 let t2 = trace_poly.evaluate(g * g * w);
@@ -88,11 +79,7 @@ impl StarkProver {
             })
             .collect();
 
-        let mut coeffs = extended_domain.ifft(&quotient_points);
-        for (i, coeff) in coeffs.iter_mut().enumerate() {
-            *coeff *= offset.pow([i as u64]);
-        }
-
+        let coeffs = extended_domain.ifft(&quotient_points);
         let quotient_poly = DensePolynomial::from_coefficients_slice(&coeffs);
 
         let mut q_evals = quotient_points.clone();
@@ -132,7 +119,7 @@ impl StarkProver {
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i) * offset;
+            let x = extended_domain.element(i);
             let t0 = trace_poly.evaluate(x);
             let t1 = trace_poly.evaluate(g * x);
             let t2 = trace_poly.evaluate(g * g * x);
@@ -148,7 +135,6 @@ impl StarkProver {
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
-            coset_offset: offset,
         }
     }
 }

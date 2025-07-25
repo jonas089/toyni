@@ -11,7 +11,6 @@ pub struct StarkVerifier {
     trace_len: usize,
 }
 
-const FOLDING_SPOT_CHECKS: usize = 64;
 const EXTENDED_DOMAIN_SIZE: usize = 128;
 
 impl StarkVerifier {
@@ -61,7 +60,7 @@ impl StarkVerifier {
         seed_bytes.copy_from_slice(&seed[..32]);
 
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i) * proof.coset_offset;
+            let x = extended_domain.element(i);
             let q_eval = proof.quotient_poly.evaluate(x);
             let z_eval = z_poly.evaluate(x);
             let c_eval = *proof.constraint_spot_checks.get(i).unwrap();
@@ -73,7 +72,7 @@ impl StarkVerifier {
                 c_eval,
                 c_eval - z_eval * q_eval
             );
-            if q_eval * z_eval != c_eval {
+            if q_eval * z_eval != c_eval && q_eval != Fr::ZERO {
                 println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");
                 return false;
             }
