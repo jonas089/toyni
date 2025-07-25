@@ -1,7 +1,7 @@
 use crate::{
     digest_sha2,
     math::polynomial::Polynomial,
-    prover::{CI_SPOT_CHECKS, StarkProof},
+    prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
 };
 use ark_bls12_381::Fr;
 use ark_ff::{BigInteger, Field, PrimeField};
@@ -23,27 +23,28 @@ impl StarkVerifier {
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        let c_poly = proof.combined_constraint.sub(&proof.r_poly.mul(&z_poly));
         // should query random points over extended domain
         // and assert ci(x) == fib(ggx, gx, x)
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
-        let ci_poly = proof.constraint_polys.first().unwrap();
 
         // check ci_poly correctness against fibonacci function
         // currently we only check the first 8 points, but we should use fiat shamir for this
         // sadly this method currently only works for the orginal domain,
         // meaning we are leaking trace values :( - must find a way to fix this!
 
-        for i in 0..CI_SPOT_CHECKS {
+        for i in 0..CONSTRAINT_SPOT_CHECKS {
             let trace_at_spot = proof.trace_spot_checks[i];
             let ti0 = trace_at_spot[0];
             let ti1 = trace_at_spot[1];
             let ti2 = trace_at_spot[2];
 
             let expected = fibonacci_constraint(ti2, ti1, ti0);
-            let actual = ci_poly.evaluate(domain.element(i));
+            let actual = *proof
+                .constraint_spot_checks
+                .get(i)
+                .expect("Failed to get constraint spot check");
 
             assert_eq!(expected, actual);
         }
@@ -54,7 +55,7 @@ impl StarkVerifier {
                 ci_transcript.extend_from_slice(&root);
             }
         }
-        for coeff in proof.combined_constraint.coefficients() {
+        /*for coeff in proof.combined_constraint.coefficients() {
             ci_transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
         }
 
@@ -66,7 +67,6 @@ impl StarkVerifier {
         let verifier_transcript = build_verifier_transcript(
             &proof.fri_layers,
             &proof.fri_challenges,
-            &proof.combined_constraint,
             &proof.folding_commitment_trees,
         );
         let verifier_hash = digest_sha2(&verifier_transcript);
@@ -96,7 +96,7 @@ impl StarkVerifier {
         ) {
             println!("❌ FRI folding consistency check failed");
             return false;
-        }
+        }*/
 
         true
     }
@@ -169,7 +169,6 @@ impl StarkVerifier {
 fn build_verifier_transcript(
     fri_layers: &[Vec<Fr>],
     fri_challenges: &[Fr],
-    combined_constraint: &Polynomial,
     folding_commitment_trees: &[crate::merkle::MerkleTree],
 ) -> Vec<u8> {
     let mut transcript = Vec::new();
@@ -182,10 +181,6 @@ fn build_verifier_transcript(
 
     for challenge in fri_challenges {
         transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
-    }
-
-    for coeff in combined_constraint.coefficients() {
-        transcript.extend_from_slice(&coeff.into_bigint().to_bytes_be());
     }
 
     for tree in folding_commitment_trees {

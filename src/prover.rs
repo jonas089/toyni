@@ -5,7 +5,7 @@ use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain};
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -15,18 +15,16 @@ fn random_poly(degree: usize) -> ToyniPolynomial {
     ToyniPolynomial::new(coeffs)
 }
 
-pub const CI_SPOT_CHECKS: usize = 8;
+pub const CONSTRAINT_SPOT_CHECKS: usize = 8;
 
 #[derive(Debug)]
 pub struct StarkProof {
     pub fri_layers: Vec<Vec<Fr>>,
     pub fri_challenges: Vec<Fr>,
-    pub combined_constraint: ToyniPolynomial,
     pub quotient_poly: ToyniPolynomial,
     pub folding_commitment_trees: Vec<MerkleTree>,
-    pub trace_spot_checks: [[Fr; 3]; CI_SPOT_CHECKS],
-    pub constraint_polys: Vec<ToyniPolynomial>,
-    pub r_poly: ToyniPolynomial,
+    pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
+    pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
 }
 
 pub struct StarkProver {
@@ -54,38 +52,40 @@ impl StarkProver {
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
-        let mut domain_evaluations = vec![Fr::ZERO; domain.size() - 2];
-        for i in 0..(domain.size() - 2) {
-            let ti2 = trace_polys[0].evaluate(domain.element(i + 2));
-            let ti1 = trace_polys[0].evaluate(domain.element(i + 1));
-            let ti0 = trace_polys[0].evaluate(domain.element(i));
-            domain_evaluations[i] = fibonacci_constraint(ti2, ti1, ti0);
-        }
-        let ci_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &domain.ifft(&domain_evaluations),
-        ));
 
-        let transcript_seed = digest_sha2(
-            &ci_poly
-                .coefficients()
-                .iter()
-                .flat_map(|c| c.into_bigint().to_bytes_be())
-                .collect::<Vec<_>>(),
-        );
-        let mut alpha_bytes = [0u8; 32];
-        alpha_bytes.copy_from_slice(&transcript_seed[..32]);
+        let trace_poly = self
+            .trace
+            .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
+        let extended_points = extended_domain.elements().collect::<Vec<Fr>>();
 
-        let c_poly = ci_poly.clone(); //.scale(alpha);
-        let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        let r_poly = random_poly(2);
-        let c_z_poly = c_poly.add(&r_poly.mul(&z_poly));
+        /*let trace_lde = extended_points
+        .iter()
+        .map(|x| trace_poly.evaluate(*x))
+        .collect::<Vec<Fr>>();*/
 
-        let (quotient_poly, _) = c_poly.divide(&z_poly).unwrap();
+        let z_poly = domain.vanishing_polynomial();
 
-        let mut q_evals: Vec<Fr> = extended_domain
-            .elements()
-            .map(|x| quotient_poly.evaluate(x))
+        let g = extended_domain.group_gen();
+
+        let quotient_points: Vec<Fr> = extended_points
+            .iter()
+            .map(|&w| {
+                let z = z_poly.evaluate(&w);
+                if z == Fr::ZERO {
+                    Fr::ZERO // or panic/assert if this should never happen
+                } else {
+                    let t0 = trace_poly.evaluate(w);
+                    let t1 = trace_poly.evaluate(g * w);
+                    let t2 = trace_poly.evaluate(g * g * w);
+                    fibonacci_constraint(t2, t1, t0) / z
+                }
+            })
             .collect();
+
+        let quotient_poly =
+            DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&quotient_points));
+
+        let mut q_evals = quotient_points.clone();
 
         let mut fri_layers = vec![q_evals.clone()];
         let mut fri_challenges = Vec::new();
@@ -119,24 +119,24 @@ impl StarkProver {
         // spot check the first N points
         // todo: build a merkle tree from the evaluations and use fiat shamir
         // to reveal part of the trace without a clear context / position
-        let mut trace_spot_checks = [[Fr::ZERO; 3]; CI_SPOT_CHECKS];
-        for i in 0..CI_SPOT_CHECKS {
-            trace_spot_checks[i] = [
-                trace_polys[0].evaluate(domain.element(i)),
-                trace_polys[0].evaluate(domain.element(i + 1)),
-                trace_polys[0].evaluate(domain.element(i + 2)),
-            ];
+        let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
+        let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
+        for i in 0..CONSTRAINT_SPOT_CHECKS {
+            let t0 = trace_poly.evaluate(extended_domain.element(i));
+            let t1 = trace_poly.evaluate(extended_domain.element(i + 1));
+            let t2 = trace_poly.evaluate(extended_domain.element(i + 2));
+            trace_spot_checks[i] = [t0, t1, t2];
+
+            constraint_spot_checks[i] = fibonacci_constraint(t2, t1, t0)
         }
 
         StarkProof {
             fri_layers,
             fri_challenges,
-            combined_constraint: c_z_poly,
-            quotient_poly,
+            quotient_poly: ToyniPolynomial::from_dense_poly(quotient_poly),
             folding_commitment_trees,
             trace_spot_checks,
-            constraint_polys: vec![ci_poly],
-            r_poly,
+            constraint_spot_checks,
         }
     }
 }
