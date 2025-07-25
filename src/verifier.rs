@@ -58,7 +58,7 @@ impl StarkVerifier {
             let x = extended_domain.element(i) * shift;
             let q_eval = proof.quotient_poly.evaluate(x);
             let z_eval = z_poly.evaluate(x);
-            let c_eval = *proof.constraint_spot_checks.get(i).unwrap();
+            let c_eval = proof.c_z_poly.evaluate(x);
 
             println!(
                 "q: {:?}, z: {:?}, c: {:?}, rem: {:?}",

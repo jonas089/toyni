@@ -20,7 +20,9 @@ pub const CONSTRAINT_SPOT_CHECKS: usize = 8;
 pub struct StarkProof {
     pub fri_layers: Vec<Vec<Fr>>,
     pub fri_challenges: Vec<Fr>,
+    pub c_z_poly: ToyniPolynomial,
     pub quotient_poly: ToyniPolynomial,
+    pub lde_quotient_poly: ToyniPolynomial,
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
@@ -60,25 +62,40 @@ impl StarkProver {
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let z_poly = domain.vanishing_polynomial();
-        let g = extended_domain.group_gen();
 
+        let g = domain.group_gen();
+        let c_evals: Vec<Fr> = domain
+            .elements()
+            .take(domain.size() - 2) // <-- Only first N-2 points
+            .map(|x| {
+                let t0 = trace_poly.evaluate(x);
+                let t1 = trace_poly.evaluate(g * x);
+                let t2 = trace_poly.evaluate(g * g * x);
+                fibonacci_constraint(t2, t1, t0)
+            })
+            .collect();
+
+        let c_poly = Evaluations::from_vec_and_domain(c_evals, domain).interpolate_by_ref();
+        let c_poly = ToyniPolynomial::from_dense_poly(c_poly);
+        let c_z_poly = c_poly
+            .add(&random_poly(2).mul(&ToyniPolynomial::from_dense_poly(z_poly.clone().into())));
+
+        // perform actual polynomial division
+        let (quotient_poly, remainder) = c_z_poly
+            .divide(&ToyniPolynomial::from_dense_poly(z_poly.clone().into()))
+            .unwrap();
+
+        let g = extended_domain.group_gen();
         let quotient_points: Vec<Fr> = extended_points
             .iter()
-            .map(|&w| {
-                let w = shift * w;
-                let z = z_poly.evaluate(&w);
-                assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
-                let t0 = trace_poly.evaluate(w);
-                let t1 = trace_poly.evaluate(g * w);
-                let t2 = trace_poly.evaluate(g * g * w);
-                fibonacci_constraint(t2, t1, t0) / z
-            })
+            .map(|&w| quotient_poly.evaluate(w))
             .collect();
 
         let coset_domain = extended_domain.get_coset(shift).unwrap();
         let evaluations = Evaluations::from_vec_and_domain(quotient_points.clone(), coset_domain);
         let dense_poly = evaluations.interpolate_by_ref();
-        let quotient_poly = ToyniPolynomial::from_dense_poly(dense_poly);
+
+        let lde_quotient_poly = ToyniPolynomial::from_dense_poly(dense_poly);
 
         let mut q_evals = quotient_points.clone();
 
@@ -111,11 +128,6 @@ impl StarkProver {
             fri_layers.push(q_evals.clone());
         }
 
-        println!(
-            "Quotient Poly Degree, must be < 128: {:?}",
-            &quotient_poly.degree()
-        );
-
         // spot check the first N points
         // todo: build a merkle tree from the evaluations and use fiat shamir
         // to reveal part of the trace without a clear context / position
@@ -134,7 +146,9 @@ impl StarkProver {
         StarkProof {
             fri_layers,
             fri_challenges,
+            c_z_poly,
             quotient_poly,
+            lde_quotient_poly,
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
