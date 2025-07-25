@@ -7,7 +7,9 @@ use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{
+    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
+};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -42,6 +44,7 @@ impl StarkProver {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
+        let shift = Fr::from(7);
         let domain_slice: Vec<Fr> = domain.elements().collect();
 
         let extended_points = extended_domain.clone().elements().collect::<Vec<Fr>>();
@@ -67,11 +70,9 @@ impl StarkProver {
         let quotient_points: Vec<Fr> = extended_points
             .iter()
             .map(|&w| {
+                let w = shift * w;
                 let z = z_poly.evaluate(&w);
-                //assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
-                if z == Fr::ZERO {
-                    return z;
-                }
+                assert!(z != Fr::ZERO, "Z(x) shouldn't vanish on the coset domain!");
                 let t0 = trace_poly.evaluate(w);
                 let t1 = trace_poly.evaluate(g * w);
                 let t2 = trace_poly.evaluate(g * g * w);
@@ -79,8 +80,10 @@ impl StarkProver {
             })
             .collect();
 
-        let coeffs = extended_domain.ifft(&quotient_points);
-        let quotient_poly = DensePolynomial::from_coefficients_slice(&coeffs);
+        let coset_domain = extended_domain.get_coset(shift).unwrap();
+        let evaluations = Evaluations::from_vec_and_domain(quotient_points.clone(), coset_domain);
+        let dense_poly = evaluations.interpolate_by_ref();
+        let quotient_poly = ToyniPolynomial::from_dense_poly(dense_poly);
 
         let mut q_evals = quotient_points.clone();
 
@@ -119,7 +122,7 @@ impl StarkProver {
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i);
+            let x = extended_domain.element(i) * shift;
             let t0 = trace_poly.evaluate(x);
             let t1 = trace_poly.evaluate(g * x);
             let t2 = trace_poly.evaluate(g * g * x);
@@ -131,7 +134,7 @@ impl StarkProver {
         StarkProof {
             fri_layers,
             fri_challenges,
-            quotient_poly: ToyniPolynomial::from_dense_poly(quotient_poly),
+            quotient_poly,
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,

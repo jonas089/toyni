@@ -19,20 +19,14 @@ impl StarkVerifier {
     }
 
     pub fn verify(&self, proof: &StarkProof) -> bool {
+        let shift = Fr::from(7);
         let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
         let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        // should query random points over extended domain
-        // and assert ci(x) == fib(ggx, gx, x)
+
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
-
-        // check ci_poly correctness against fibonacci function
-        // currently we only check the first 8 points, but we should use fiat shamir for this
-        // sadly this method currently only works for the orginal domain,
-        // meaning we are leaking trace values :( - must find a way to fix this!
-
         for i in 0..CONSTRAINT_SPOT_CHECKS {
             let trace_at_spot = proof.trace_spot_checks[i];
             let ti0 = trace_at_spot[0];
@@ -60,7 +54,7 @@ impl StarkVerifier {
         seed_bytes.copy_from_slice(&seed[..32]);
 
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i);
+            let x = extended_domain.element(i) * shift;
             let q_eval = proof.quotient_poly.evaluate(x);
             let z_eval = z_poly.evaluate(x);
             let c_eval = *proof.constraint_spot_checks.get(i).unwrap();
@@ -72,7 +66,7 @@ impl StarkVerifier {
                 c_eval,
                 c_eval - z_eval * q_eval
             );
-            if q_eval * z_eval != c_eval && q_eval != Fr::ZERO {
+            if q_eval * z_eval != c_eval {
                 println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");
                 return false;
             }
@@ -153,30 +147,4 @@ impl StarkVerifier {
 
         true
     }
-}
-
-fn build_verifier_transcript(
-    fri_layers: &[Vec<Fr>],
-    fri_challenges: &[Fr],
-    folding_commitment_trees: &[crate::merkle::MerkleTree],
-) -> Vec<u8> {
-    let mut transcript = Vec::new();
-
-    for layer in fri_layers {
-        for eval in layer {
-            transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
-        }
-    }
-
-    for challenge in fri_challenges {
-        transcript.extend_from_slice(&challenge.into_bigint().to_bytes_be());
-    }
-
-    for tree in folding_commitment_trees {
-        if let Some(root) = tree.root() {
-            transcript.extend_from_slice(&root);
-        }
-    }
-
-    transcript
 }
