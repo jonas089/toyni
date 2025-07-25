@@ -53,6 +53,7 @@ impl StarkVerifier {
         let mut seed_bytes = [0u8; 32];
         seed_bytes.copy_from_slice(&seed[..32]);
 
+        // todo: fiat shamir
         for i in 0..CONSTRAINT_SPOT_CHECKS {
             let x = extended_domain.element(i) * shift;
             let q_eval = proof.quotient_poly.evaluate(x);

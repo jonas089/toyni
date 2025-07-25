@@ -111,6 +111,11 @@ impl StarkProver {
             fri_layers.push(q_evals.clone());
         }
 
+        println!(
+            "Quotient Poly Degree, must be < 128: {:?}",
+            &quotient_poly.degree()
+        );
+
         // spot check the first N points
         // todo: build a merkle tree from the evaluations and use fiat shamir
         // to reveal part of the trace without a clear context / position
