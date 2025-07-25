@@ -4,7 +4,7 @@ use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -22,7 +22,6 @@ pub struct StarkProof {
     pub fri_challenges: Vec<Fr>,
     pub c_z_poly: ToyniPolynomial,
     pub quotient_poly: ToyniPolynomial,
-    pub lde_quotient_poly: ToyniPolynomial,
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
@@ -85,17 +84,13 @@ impl StarkProver {
             .divide(&ToyniPolynomial::from_dense_poly(z_poly.clone().into()))
             .unwrap();
 
-        let g = extended_domain.group_gen();
+        assert_eq!(remainder.degree(), 0);
+
+        //let g = extended_domain.group_gen();
         let quotient_points: Vec<Fr> = extended_points
             .iter()
             .map(|&w| quotient_poly.evaluate(w))
             .collect();
-
-        let coset_domain = extended_domain.get_coset(shift).unwrap();
-        let evaluations = Evaluations::from_vec_and_domain(quotient_points.clone(), coset_domain);
-        let dense_poly = evaluations.interpolate_by_ref();
-
-        let lde_quotient_poly = ToyniPolynomial::from_dense_poly(dense_poly);
 
         let mut q_evals = quotient_points.clone();
 
@@ -148,7 +143,6 @@ impl StarkProver {
             fri_challenges,
             c_z_poly,
             quotient_poly,
-            lde_quotient_poly,
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
