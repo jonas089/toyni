@@ -32,14 +32,8 @@ impl StarkVerifier {
             let ti0 = trace_at_spot[0];
             let ti1 = trace_at_spot[1];
             let ti2 = trace_at_spot[2];
-
             let expected = fibonacci_constraint(ti2, ti1, ti0);
-            let actual = *proof
-                .constraint_spot_checks
-                .get(i)
-                .expect("Failed to get constraint spot check");
-
-            assert_eq!(expected, actual);
+            assert_eq!(expected, proof.constraint_spot_checks[i]);
         }
 
         let mut ci_transcript = Vec::new();

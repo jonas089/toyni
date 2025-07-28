@@ -4,7 +4,7 @@ use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -14,7 +14,7 @@ fn random_poly(degree: usize) -> ToyniPolynomial {
     ToyniPolynomial::new(coeffs)
 }
 
-pub const CONSTRAINT_SPOT_CHECKS: usize = 8;
+pub const CONSTRAINT_SPOT_CHECKS: usize = 50;
 
 #[derive(Debug)]
 pub struct StarkProof {
@@ -25,6 +25,7 @@ pub struct StarkProof {
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
+    pub r_poly: ToyniPolynomial,
 }
 
 pub struct StarkProver {
@@ -46,7 +47,7 @@ impl StarkProver {
         let extended_points = extended_domain.clone().elements().collect::<Vec<Fr>>();
 
         let mut trace_polys = Vec::new();
-
+        let r_poly = random_poly(2);
         for column_idx in 0..self.trace.trace[0].len() {
             let poly = self.trace.interpolate_column(&domain_slice, column_idx);
             trace_polys.push(poly);
@@ -63,9 +64,10 @@ impl StarkProver {
         let z_poly = domain.vanishing_polynomial();
 
         let g = domain.group_gen();
-        let c_evals: Vec<Fr> = domain
+
+        let constraint_evals: Vec<Fr> = domain
             .elements()
-            .take(domain.size() - 2) // <-- Only first N-2 points
+            .take(domain.size() - 2)
             .map(|x| {
                 let t0 = trace_poly.evaluate(x);
                 let t1 = trace_poly.evaluate(g * x);
@@ -74,19 +76,21 @@ impl StarkProver {
             })
             .collect();
 
-        let c_poly = Evaluations::from_vec_and_domain(c_evals, domain).interpolate_by_ref();
-        let c_poly = ToyniPolynomial::from_dense_poly(c_poly);
-        let c_z_poly = c_poly
-            .add(&random_poly(2).mul(&ToyniPolynomial::from_dense_poly(z_poly.clone().into())));
+        println!("C_evals: {:?}", &constraint_evals);
 
-        // perform actual polynomial division
+        let constraint_poly =
+            Evaluations::from_vec_and_domain(constraint_evals, domain).interpolate_by_ref();
+
+        let constraint_poly = ToyniPolynomial::from_dense_poly(constraint_poly);
+        let z_toyni = ToyniPolynomial::from_dense_poly(z_poly.clone().into());
+        let c_z_poly = constraint_poly.mul(&z_toyni).add(&r_poly.mul(&z_toyni));
+
         let (quotient_poly, remainder) = c_z_poly
             .divide(&ToyniPolynomial::from_dense_poly(z_poly.clone().into()))
             .unwrap();
 
         assert_eq!(remainder.degree(), 0);
 
-        //let g = extended_domain.group_gen();
         let quotient_points: Vec<Fr> = extended_points
             .iter()
             .map(|&w| quotient_poly.evaluate(w))
@@ -129,7 +133,7 @@ impl StarkProver {
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
         for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i) * shift;
+            let x = extended_domain.element(domain.size() + i) * shift;
             let t0 = trace_poly.evaluate(x);
             let t1 = trace_poly.evaluate(g * x);
             let t2 = trace_poly.evaluate(g * g * x);
@@ -137,6 +141,10 @@ impl StarkProver {
 
             constraint_spot_checks[i] = fibonacci_constraint(t2, t1, t0);
         }
+
+        println!("Trace Degree: {:?}", &trace_poly.degree());
+        println!("Quotient Degree: {:?}", &quotient_poly.degree());
+        println!("Constraint Degree: {:?}", &constraint_poly.degree());
 
         StarkProof {
             fri_layers,
@@ -146,6 +154,7 @@ impl StarkProver {
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
+            r_poly,
         }
     }
 }
