@@ -4,7 +4,7 @@ use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -20,12 +20,13 @@ pub const CONSTRAINT_SPOT_CHECKS: usize = 50;
 pub struct StarkProof {
     pub fri_layers: Vec<Vec<Fr>>,
     pub fri_challenges: Vec<Fr>,
-    pub c_z_poly: ToyniPolynomial,
-    pub quotient_poly: ToyniPolynomial,
+    pub deep_poly: ToyniPolynomial,
     pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
     pub r_poly: ToyniPolynomial,
+    pub z: Fr,
+    pub c_at_z: Fr,
 }
 
 pub struct StarkProver {
@@ -42,19 +43,12 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let shift = Fr::from(7);
-        let domain_slice: Vec<Fr> = domain.elements().collect();
-
         let extended_points = extended_domain.clone().elements().collect::<Vec<Fr>>();
 
-        let mut trace_polys = Vec::new();
         let r_poly = random_poly(2);
-        for column_idx in 0..self.trace.trace[0].len() {
-            let poly = self.trace.interpolate_column(&domain_slice, column_idx);
-            trace_polys.push(poly);
-        }
 
-        fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
-            ti2 - (ti1 + ti0)
+        fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
+            t2 - (t1 + t0)
         }
 
         let trace_poly = self
@@ -62,7 +56,7 @@ impl StarkProver {
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let z_poly = domain.vanishing_polynomial();
-
+        let z_toyni = ToyniPolynomial::from_dense_poly(z_poly.clone().into());
         let g = domain.group_gen();
 
         let constraint_evals: Vec<Fr> = domain
@@ -76,35 +70,37 @@ impl StarkProver {
             })
             .collect();
 
-        println!("C_evals: {:?}", &constraint_evals);
+        let mut padded_constraints = constraint_evals.clone();
+        while padded_constraints.len() < domain.size() {
+            padded_constraints.push(Fr::ZERO);
+        }
 
         let constraint_poly =
-            Evaluations::from_vec_and_domain(constraint_evals, domain).interpolate_by_ref();
-
+            Evaluations::from_vec_and_domain(padded_constraints, domain).interpolate_by_ref();
         let constraint_poly = ToyniPolynomial::from_dense_poly(constraint_poly);
-        let z_toyni = ToyniPolynomial::from_dense_poly(z_poly.clone().into());
-        let c_z_poly = constraint_poly.mul(&z_toyni).add(&r_poly.mul(&z_toyni));
 
-        let (quotient_poly, remainder) = c_z_poly
-            .divide(&ToyniPolynomial::from_dense_poly(z_poly.clone().into()))
-            .unwrap();
+        let z = Fr::rand(&mut thread_rng());
+        let c_at_z = constraint_poly.evaluate(z);
 
-        assert_eq!(remainder.degree(), 0);
+        let deep_poly = constraint_poly
+            .sub(&ToyniPolynomial::new(vec![c_at_z]))
+            .divide_by_linear(z)
+            .0
+            .add(&r_poly.mul(&z_toyni));
 
-        let quotient_points: Vec<Fr> = extended_points
+        let deep_points: Vec<Fr> = extended_points
             .iter()
-            .map(|&w| quotient_poly.evaluate(w))
+            .map(|&w| deep_poly.evaluate(w * shift))
             .collect();
 
-        let mut q_evals = quotient_points.clone();
-
-        let mut fri_layers = vec![q_evals.clone()];
+        let mut d_evals = deep_points.clone();
+        let mut fri_layers = vec![d_evals.clone()];
         let mut fri_challenges = Vec::new();
         let mut folding_commitment_trees: Vec<MerkleTree> = Vec::new();
         let mut fri_transcript = Vec::new();
 
-        while q_evals.len() > 8 {
-            for eval in &q_evals {
+        while d_evals.len() > 8 {
+            for eval in &d_evals {
                 fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
             }
 
@@ -114,22 +110,19 @@ impl StarkProver {
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
             fri_challenges.push(beta);
 
-            q_evals = fri_fold(&q_evals, beta);
+            d_evals = fri_fold(&d_evals, beta);
 
             let folding_step_merkle_tree = MerkleTree::new(
-                q_evals
+                d_evals
                     .clone()
                     .iter()
                     .map(|x| x.into_bigint().to_bytes_be())
                     .collect(),
             );
             folding_commitment_trees.push(folding_step_merkle_tree);
-            fri_layers.push(q_evals.clone());
+            fri_layers.push(d_evals.clone());
         }
 
-        // spot check the first N points
-        // todo: build a merkle tree from the evaluations and use fiat shamir
-        // to reveal part of the trace without a clear context / position
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
         for i in 0..CONSTRAINT_SPOT_CHECKS {
@@ -138,23 +131,23 @@ impl StarkProver {
             let t1 = trace_poly.evaluate(g * x);
             let t2 = trace_poly.evaluate(g * g * x);
             trace_spot_checks[i] = [t0, t1, t2];
-
             constraint_spot_checks[i] = fibonacci_constraint(t2, t1, t0);
         }
 
         println!("Trace Degree: {:?}", &trace_poly.degree());
-        println!("Quotient Degree: {:?}", &quotient_poly.degree());
+        println!("Deep Degree: {:?}", &deep_poly.degree());
         println!("Constraint Degree: {:?}", &constraint_poly.degree());
 
         StarkProof {
             fri_layers,
             fri_challenges,
-            c_z_poly,
-            quotient_poly,
+            deep_poly,
             folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
             r_poly,
+            z,
+            c_at_z,
         }
     }
 }

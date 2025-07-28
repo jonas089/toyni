@@ -4,7 +4,7 @@ use crate::{
     prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
 };
 use ark_bls12_381::Fr;
-use ark_ff::{BigInteger, Field, PrimeField};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
 pub struct StarkVerifier {
@@ -27,6 +27,7 @@ impl StarkVerifier {
         fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
             ti2 - (ti1 + ti0)
         }
+
         for i in 0..CONSTRAINT_SPOT_CHECKS {
             let trace_at_spot = proof.trace_spot_checks[i];
             let ti0 = trace_at_spot[0];
@@ -36,33 +37,22 @@ impl StarkVerifier {
             assert_eq!(expected, proof.constraint_spot_checks[i]);
         }
 
-        let mut ci_transcript = Vec::new();
-        for tree in &proof.folding_commitment_trees {
-            if let Some(root) = tree.root() {
-                ci_transcript.extend_from_slice(&root);
-            }
-        }
-
-        let seed = digest_sha2(&ci_transcript);
-        let mut seed_bytes = [0u8; 32];
-        seed_bytes.copy_from_slice(&seed[..32]);
-
-        // todo: fiat shamir
         for i in 0..CONSTRAINT_SPOT_CHECKS {
             let x = extended_domain.element(i) * shift;
-            let q_eval = proof.quotient_poly.evaluate(x);
-            let z_eval = z_poly.evaluate(x);
-            let c_eval = proof.c_z_poly.evaluate(x);
+            let z_x = z_poly.evaluate(x);
+            let mut c_z = proof.constraint_spot_checks[i];
+            let c_x_minus_cz = Polynomial {
+                coefficients: vec![*c_z.neg_in_place(), Fr::ONE],
+            };
+            let (deep_term, _) = c_x_minus_cz.divide_by_linear(x);
+            let r_term = proof.r_poly.evaluate(x) * z_x;
+            let expected = deep_term.evaluate(x) + r_term;
+            let actual = proof.deep_poly.evaluate(x);
 
-            println!(
-                "q: {:?}, z: {:?}, c: {:?}, rem: {:?}",
-                q_eval,
-                z_eval,
-                c_eval,
-                c_eval - z_eval * q_eval
-            );
-            if q_eval * z_eval != c_eval {
-                println!("❌ Spot check failed: Q(x₀)*Z(x₀) ≠ C(x₀)");
+            if expected != actual {
+                println!("❌ DEEP polynomial check failed at spot {}", i);
+                println!("Expected: {:?}", expected);
+                println!("Actual:   {:?}", actual);
                 return false;
             }
         }
@@ -94,7 +84,6 @@ impl StarkVerifier {
         {
             let half_n = current_layer.len() / 2;
 
-            // maximum domain size is 128
             assert!(current_layer.len() < EXTENDED_DOMAIN_SIZE + 1);
 
             if next_layer.len() != half_n {
@@ -111,7 +100,6 @@ impl StarkVerifier {
                 let fx = current_layer[j];
                 let f_neg_x = current_layer[j + half_n];
 
-                // Fold: (f(x) + f(-x) + β(f(x) - f(-x))) / 2
                 let numerator = fx + f_neg_x + *beta * (fx - f_neg_x);
                 let expected_next = numerator * Fr::from(2u64).inverse().unwrap();
                 let actual_next = next_layer[j];
@@ -123,7 +111,6 @@ impl StarkVerifier {
                     return false;
                 }
 
-                // Merkle commitment verification
                 let value_bytes = actual_next.into_bigint().to_bytes_be();
                 let proof = merkle_tree.get_proof(j).expect("Merkle proof should exist");
                 let root = merkle_tree.root().expect("Merkle root should exist");

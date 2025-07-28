@@ -71,6 +71,26 @@ impl Polynomial {
         Some((Polynomial::new(quotient), Polynomial::new(remainder)))
     }
 
+    pub fn divide_by_linear(&self, z: Fr) -> (Polynomial, Fr) {
+        // Performs (self - self(z)) / (x - z)
+        // Equivalent to synthetic division by (x - z)
+        let mut quotient = vec![Fr::zero(); self.coefficients.len().saturating_sub(1)];
+        let mut remainder = Fr::zero();
+
+        let mut acc = Fr::zero();
+        for (i, &coeff) in self.coefficients.iter().rev().enumerate() {
+            if i == 0 {
+                remainder = acc;
+                break;
+            }
+            acc = coeff + z * acc;
+            let length = quotient.len();
+            quotient[length - i] = acc;
+        }
+
+        (Polynomial::new(quotient), remainder)
+    }
+
     pub fn add(&self, other: &Polynomial) -> Polynomial {
         let max_len = std::cmp::max(self.coefficients.len(), other.coefficients.len());
         let mut result = vec![Fr::zero(); max_len];
