@@ -59,6 +59,11 @@ impl StarkProver {
         let z_toyni = ToyniPolynomial::from_dense_poly(z_poly.clone().into());
         let g = domain.group_gen();
 
+        let fibonacci_column = self.trace.get_column(0);
+        println!("fib column: {:?}", &fibonacci_column);
+
+        // todo: don't interpolate the C poly, evaluate at points instead.
+        // interpolation of valid constraints always yields 0
         let constraint_evals: Vec<Fr> = domain
             .elements()
             .take(domain.size() - 2)
@@ -77,6 +82,7 @@ impl StarkProver {
 
         let constraint_poly =
             Evaluations::from_vec_and_domain(padded_constraints, domain).interpolate_by_ref();
+
         let constraint_poly = ToyniPolynomial::from_dense_poly(constraint_poly);
 
         let z = Fr::rand(&mut thread_rng());

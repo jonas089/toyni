@@ -26,8 +26,8 @@ impl ExecutionTrace {
         }
     }
 
-    pub fn get_column(&self, index: u64) -> &Vec<Fr> {
-        &self.trace[index as usize]
+    pub fn get_column(&self, index: usize) -> Vec<Fr> {
+        self.trace.iter().map(|row| row[index]).collect()
     }
 
     pub fn interpolate_column(&self, domain: &[Fr], column_idx: usize) -> Polynomial {
