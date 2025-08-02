@@ -1,5 +1,6 @@
 use ark_bls12_381::Fr;
 use ark_ff::Field;
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial as ArkPoly};
 
 use crate::math::polynomial::Polynomial;
 pub type ProgramVariable = String;
@@ -24,10 +25,6 @@ impl ExecutionTrace {
                 row.push(val);
             }
         }
-    }
-
-    pub fn get_column(&self, index: usize) -> Vec<Fr> {
-        self.trace.iter().map(|row| row[index]).collect()
     }
 
     pub fn interpolate_column(&self, domain: &[Fr], column_idx: usize) -> Polynomial {
