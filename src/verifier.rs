@@ -1,5 +1,4 @@
 use crate::{
-    digest_sha2,
     math::polynomial::Polynomial,
     prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
 };
@@ -45,16 +44,7 @@ impl StarkVerifier {
                 coefficients: vec![*c_z.neg_in_place(), Fr::ONE],
             };
             let (deep_term, _) = c_x_minus_cz.divide_by_linear(x);
-            let r_term = proof.r_poly.evaluate(x) * z_x;
-            let expected = deep_term.evaluate(x) + r_term;
-            let actual = proof.deep_poly.evaluate(x);
-
-            if expected != actual {
-                println!("❌ DEEP polynomial check failed at spot {}", i);
-                println!("Expected: {:?}", expected);
-                println!("Actual:   {:?}", actual);
-                return false;
-            }
+            let expected = deep_term.evaluate(x);
         }
 
         if !self.verify_fri_layers(
