@@ -13,7 +13,8 @@ Currently Toyni is designed around a simple `Fibonacci` example program.
 ## Status Update
 I'm currently working on a sound DEEP-ALI implementation in `prover.rs`. The degree of the deep polynomial D(x) blows up if C(x) does not vanish over
 the fibonacci function (currently the only constraint) for the trace polynomial T(x). For soundness we will have to issue a challenge `alpha` and `z`
-using fiat-shamir. This is tbd.
+using fiat-shamir. This is tbd. The prover won’t be able to cheat because they must commit to a trace polynomial that results in a low-degree D(x) 
+only if the constraints encoded in C(x) are satisfied.
 
 The `Fibonacci` program defines a single-column trace table of shape:
 

@@ -18,34 +18,7 @@ impl StarkVerifier {
     }
 
     pub fn verify(&self, proof: &StarkProof) -> bool {
-        let shift = Fr::from(7);
-        let domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(self.trace_len * 8).unwrap();
-        let z_poly = Polynomial::from_dense_poly(domain.vanishing_polynomial().into());
-
-        fn fibonacci_constraint(ti2: Fr, ti1: Fr, ti0: Fr) -> Fr {
-            ti2 - (ti1 + ti0)
-        }
-
-        for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let trace_at_spot = proof.trace_spot_checks[i];
-            let ti0 = trace_at_spot[0];
-            let ti1 = trace_at_spot[1];
-            let ti2 = trace_at_spot[2];
-            let expected = fibonacci_constraint(ti2, ti1, ti0);
-            assert_eq!(expected, proof.constraint_spot_checks[i]);
-        }
-
-        for i in 0..CONSTRAINT_SPOT_CHECKS {
-            let x = extended_domain.element(i) * shift;
-            let z_x = z_poly.evaluate(x);
-            let mut c_z = proof.constraint_spot_checks[i];
-            let c_x_minus_cz = Polynomial {
-                coefficients: vec![*c_z.neg_in_place(), Fr::ONE],
-            };
-            let (deep_term, _) = c_x_minus_cz.divide_by_linear(x);
-            let expected = deep_term.evaluate(x);
-        }
+        // todo: DEEP verification using D(x) = (a * (C(x) - C(z)) / x - z) + r(x) * Zh(x) and openings of T(x), T(gx), T(ggx)
 
         if !self.verify_fri_layers(
             &proof.fri_layers,
