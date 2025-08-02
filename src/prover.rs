@@ -1,3 +1,5 @@
+use core::panic;
+
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
@@ -40,7 +42,6 @@ impl StarkProver {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-
         let r_poly = random_poly(2);
 
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
@@ -75,8 +76,7 @@ impl StarkProver {
         // 2. Interpolate over H (not extended):
         let c_h_poly = ToyniPolynomial::from_dense_poly(
             Evaluations::from_vec_and_domain(c_evals_on_h.clone(), domain).interpolate(),
-        )
-        .add(&r_poly.mul(&z_poly));
+        );
 
         let z = get_random_z(&domain);
         let mut d_evals = vec![];
@@ -85,26 +85,20 @@ impl StarkProver {
             let c_x = c_h_poly.evaluate(x);
             let c_z = c_h_poly.evaluate(z);
 
-            let d_x = (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
+            let mut rng = thread_rng();
+            let alpha = Fr::rand(&mut rng);
+            let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
             d_evals.push(d_x);
         }
 
-        let c_evals: Vec<Fr> = domain
-            .elements()
-            .map(|x| {
-                fibonacci_constraint(
-                    trace_poly.evaluate(x * g * g),
-                    trace_poly.evaluate(x * g),
-                    trace_poly.evaluate(x),
-                )
-            })
-            .collect();
-        let c_poly = Evaluations::from_vec_and_domain(c_evals.clone(), domain).interpolate();
         let d_poly =
             Evaluations::from_vec_and_domain(d_evals.clone(), extended_domain).interpolate();
 
-        println!("deg(C(x)) = {}", c_poly.degree());
+        println!("deg(C(x)) = {}", c_h_poly.degree());
         println!("deg(D(x)) = {}", d_poly.degree());
+        if d_poly.degree() > 66 {
+            panic!("The verifier will reject this proof once fully implemented!")
+        }
 
         let mut fri_layers = vec![d_evals.clone()];
         let mut fri_challenges = Vec::new();
