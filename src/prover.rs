@@ -6,7 +6,7 @@ use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -42,15 +42,15 @@ impl StarkProver {
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        let r_poly = random_poly(2);
+        let r_poly = random_poly(8);
 
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
-            if t2 == Fr::from(10610209857723u64)
+            /*if t2 == Fr::from(10610209857723u64)
                 || t1 == Fr::from(10610209857723u64)
                 || t0 == Fr::from(10610209857723u64)
             {
                 return Fr::ZERO;
-            }
+            }*/
             t2 - (t1 + t0)
         }
 
@@ -59,46 +59,59 @@ impl StarkProver {
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let g = domain.group_gen();
-        let h_elems: Vec<Fr> = domain.elements().collect();
-        let c_evals_on_h: Vec<Fr> = h_elems
-            .iter()
-            .enumerate()
-            .map(|(_, &x)| {
-                // these should be non-zero at your injected violation indices
-                fibonacci_constraint(
-                    trace_poly.evaluate(x * g * g),
-                    trace_poly.evaluate(x * g),
-                    trace_poly.evaluate(x),
-                )
-            })
-            .collect();
+        /*let c_evals_on_h: Vec<Fr> = domain
+        .elements()
+        .into_iter()
+        .enumerate()
+        .map(|(_, x)| {
+            // these should be non-zero at your injected violation indices
+            fibonacci_constraint(
+                trace_poly.evaluate(x * g * g),
+                trace_poly.evaluate(x * g),
+                trace_poly.evaluate(x),
+            )
+        })
+        .collect();*/
 
         // 2. Interpolate over H (not extended):
-        let c_h_poly = ToyniPolynomial::from_dense_poly(
+        /*let c_h_poly = ToyniPolynomial::from_dense_poly(
             Evaluations::from_vec_and_domain(c_evals_on_h.clone(), domain).interpolate(),
-        );
+        );*/
 
         let z = get_random_z(&domain);
         let mut d_evals = vec![];
+        let mut rng = thread_rng();
+        let alpha = Fr::rand(&mut rng);
+        let mut roots_in_lde = 0;
         for x in extended_domain.elements() {
             // constraints don't hold for the last 2 rows
-            let c_x = c_h_poly.evaluate(x);
-            let c_z = c_h_poly.evaluate(z);
-
-            let mut rng = thread_rng();
-            let alpha = Fr::rand(&mut rng);
+            let c_x = fibonacci_constraint(
+                trace_poly.evaluate(g * g * x),
+                trace_poly.evaluate(g * x),
+                trace_poly.evaluate(x),
+            );
+            let c_z = fibonacci_constraint(
+                trace_poly.evaluate(g * g * z),
+                trace_poly.evaluate(g * z),
+                trace_poly.evaluate(z),
+            );
             let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
+            if d_x == Fr::ZERO {
+                roots_in_lde += 1;
+            }
             d_evals.push(d_x);
         }
+        println!("roots in lde: {:?}", &roots_in_lde);
 
-        let d_poly =
-            Evaluations::from_vec_and_domain(d_evals.clone(), extended_domain).interpolate();
-
-        println!("deg(C(x)) = {}", c_h_poly.degree());
-        println!("deg(D(x)) = {}", d_poly.degree());
-        if d_poly.degree() > 66 {
-            panic!("The verifier will reject this proof once fully implemented!")
+        let d_poly = extended_domain.ifft(&d_evals);
+        let mut roots = 0;
+        for element in &d_poly {
+            if element == &Fr::ZERO {
+                roots += 1;
+            }
         }
+        println!("roots: {}", &roots);
+        println!("d_poly: {:?}, size: {:?}", &d_poly, &d_poly.len());
 
         let mut fri_layers = vec![d_evals.clone()];
         let mut fri_challenges = Vec::new();
@@ -179,7 +192,7 @@ fn get_random_z(domain: &GeneralEvaluationDomain<Fr>) -> Fr {
 mod tests {
     use crate::{program::trace::ExecutionTrace, prover::StarkProver};
     use ark_bls12_381::Fr;
-    use ark_ff::UniformRand;
+    use ark_ff::{AdditiveGroup, UniformRand};
     use rand::thread_rng;
 
     #[test]
@@ -213,17 +226,11 @@ mod tests {
     #[should_panic]
     fn test_invalid_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
-        let mut trace = fibonacci_list(64)
-            .iter()
-            .map(|&x| Fr::from(x))
-            .collect::<Vec<_>>();
-
-        // Inject multiple violations
-        for i in (10..50).step_by(5) {
-            let mut rng = thread_rng();
-            trace[i] += Fr::rand(&mut rng);
+        let mut trace = vec![Fr::ZERO; 64];
+        let mut rng = thread_rng();
+        for i in 0..64 {
+            trace[i] = Fr::rand(&mut rng);
         }
-
         execution_trace.insert_column(trace);
         let stark = StarkProver::new(execution_trace.clone());
         let _proof = stark.generate_proof();
