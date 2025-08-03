@@ -1,12 +1,13 @@
-use core::panic;
-
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain};
+use ark_poly::univariate::DensePolynomial;
+use ark_poly::{
+    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
+};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -20,9 +21,7 @@ pub const CONSTRAINT_SPOT_CHECKS: usize = 50;
 
 #[derive(Debug)]
 pub struct StarkProof {
-    pub fri_layers: Vec<Vec<Fr>>,
     pub fri_challenges: Vec<Fr>,
-    pub folding_commitment_trees: Vec<MerkleTree>,
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
 }
@@ -39,10 +38,10 @@ impl StarkProver {
     pub fn generate_proof(&self) -> StarkProof {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 64).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        let r_poly = random_poly(512);
+        let r_poly = random_poly(4);
 
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
             if t2 == Fr::from(10610209857723u64)
@@ -70,32 +69,20 @@ impl StarkProver {
                 trace_poly.evaluate(g * x),
                 trace_poly.evaluate(x),
             );
+            if c_x == Fr::ZERO {
+                roots_in_lde += 1;
+            }
             let c_z = fibonacci_constraint(
                 trace_poly.evaluate(g * g * z),
                 trace_poly.evaluate(g * z),
                 trace_poly.evaluate(z),
             );
             let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
-            if d_x == Fr::ZERO {
-                roots_in_lde += 1;
-            }
             d_evals.push(d_x);
         }
         println!("roots in lde: {:?}", &roots_in_lde);
 
-        let d_poly = extended_domain.ifft(&d_evals);
-        let mut roots = 0;
-        for element in &d_poly {
-            if element == &Fr::ZERO {
-                roots += 1;
-            }
-        }
-        println!("roots: {}", &roots);
-        //println!("d_poly: {:?}, size: {:?}", &d_poly, &d_poly.len());
-
-        let mut fri_layers = vec![d_evals.clone()];
         let mut fri_challenges = Vec::new();
-        let mut folding_commitment_trees: Vec<MerkleTree> = Vec::new();
         let mut fri_transcript = Vec::new();
 
         // folding the D(x) polynomial
@@ -113,6 +100,7 @@ impl StarkProver {
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
             fri_challenges.push(beta);
 
+            // Fold and reduce the number of points (halving)
             d_evals = fri_fold(&d_evals, beta);
 
             // Check if all values are the same (constant polynomial)
@@ -122,30 +110,24 @@ impl StarkProver {
                 break;
             }
 
-            let folding_step_merkle_tree = MerkleTree::new(
-                d_evals
-                    .clone()
-                    .iter()
-                    .map(|x| x.into_bigint().to_bytes_be())
-                    .collect(),
-            );
-            folding_commitment_trees.push(folding_step_merkle_tree);
-            fri_layers.push(d_evals.clone());
             folding_steps += 1;
+            println!(
+                "Folding step: {}, current degree: {}",
+                folding_steps,
+                d_evals.len()
+            );
         }
-
         if !fri_final_constant {
             println!("❌ FRI did not fold to constant — high degree likely");
         }
+
         println!("Folding Steps: {}", folding_steps);
 
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
 
         StarkProof {
-            fri_layers,
             fri_challenges,
-            folding_commitment_trees,
             trace_spot_checks,
             constraint_spot_checks,
         }
@@ -189,6 +171,20 @@ mod tests {
 
     #[test]
     #[should_panic]
+    fn test_invalid_trace_should_fail() {
+        let mut execution_trace = ExecutionTrace::new();
+        let mut trace = vec![Fr::ZERO; 64];
+        let mut rng = thread_rng();
+        for i in 0..64 {
+            trace[i] = Fr::rand(&mut rng);
+        }
+        execution_trace.insert_column(trace);
+        let stark = StarkProver::new(execution_trace.clone());
+        let _proof = stark.generate_proof();
+    }
+
+    #[test]
+    #[should_panic]
     fn test_large_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
         let mut rng = thread_rng();
@@ -200,20 +196,6 @@ mod tests {
         let _proof = stark.generate_proof();
         /*let verifier = StarkVerifier::new(execution_trace.trace.len());
         assert!(verifier.verify(&proof));*/
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_invalid_trace_should_fail() {
-        let mut execution_trace = ExecutionTrace::new();
-        let mut trace = vec![Fr::ZERO; 64];
-        let mut rng = thread_rng();
-        for i in 0..64 {
-            trace[i] = Fr::rand(&mut rng);
-        }
-        execution_trace.insert_column(trace);
-        let stark = StarkProver::new(execution_trace.clone());
-        let _proof = stark.generate_proof();
     }
 
     fn fibonacci_list(n: usize) -> Vec<u64> {

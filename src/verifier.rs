@@ -20,15 +20,6 @@ impl StarkVerifier {
     pub fn verify(&self, proof: &StarkProof) -> bool {
         // todo: DEEP verification using D(x) = (a * (C(x) - C(z)) / x - z) + r(x) * Zh(x) and openings of T(x), T(gx), T(ggx)
 
-        if !self.verify_fri_layers(
-            &proof.fri_layers,
-            &proof.fri_challenges,
-            &proof.folding_commitment_trees,
-        ) {
-            println!("❌ FRI folding consistency check failed");
-            return false;
-        }
-
         true
     }
 
