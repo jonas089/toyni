@@ -1,15 +1,10 @@
-use std::iter::Map;
-
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{
-    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
-};
-use rand::seq::IteratorRandom;
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -46,6 +41,7 @@ impl StarkProver {
         let r_poly = random_poly(4);
 
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
+            // temporary solution - this is insecure and proper boundaries are better
             if t2 == Fr::from(10610209857723u64)
                 || t1 == Fr::from(10610209857723u64)
                 || t0 == Fr::from(10610209857723u64)
