@@ -6,7 +6,10 @@ use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{
+    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
+};
+use rand::seq::IteratorRandom;
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -52,35 +55,72 @@ impl StarkProver {
             t2 - (t1 + t0)
         }
 
+        // this part is correct according to all sources
         let trace_poly = self
             .trace
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
+        // todo: evaluate t(x) over extended & shifted domain and commit the evaluations
+
+        // interpolate c(x) over the extended domain and divide by vanishing poly (must be shifted later for zk)
         let g = domain.group_gen();
+        let c_evals: Vec<Fr> = extended_domain
+            .elements()
+            .map(|x| {
+                fibonacci_constraint(
+                    trace_poly.evaluate(g * g * x),
+                    trace_poly.evaluate(g * x),
+                    trace_poly.evaluate(x),
+                )
+            })
+            .collect();
+
+        let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
+            &extended_domain.ifft(&c_evals),
+        ));
+
+        let c_z_poly = c_poly.divide(&z_poly).unwrap().0;
+
         let z = get_random_z(&domain);
         let mut d_evals = vec![];
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
 
-        for x in domain.elements() {
-            let c_x = fibonacci_constraint(
-                trace_poly.evaluate(g * g * x),
-                trace_poly.evaluate(g * x),
-                trace_poly.evaluate(x),
-            );
-            let c_z = fibonacci_constraint(
-                trace_poly.evaluate(g * g * z),
-                trace_poly.evaluate(g * z),
-                trace_poly.evaluate(z),
-            );
-            let d_x = /*alpha **/ (c_x - c_z);
-            /// (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
+        let mut violations = 0;
+        for x in extended_domain.elements() {
+            let c_x = c_z_poly.evaluate(x);
+            let c_z = c_z_poly.evaluate(z);
+            let d_x = (c_x - c_z) / (x - z);
             d_evals.push(d_x);
+
+            // simulating both kinds of spot checks, in addition with FRI folding
+            // check these will be the cornerstone of security
+
+            // later this will be moved to the verifier
+
+            if c_poly.evaluate(x) != c_z_poly.evaluate(x) * z_poly.evaluate(x) {
+                violations += 1;
+            }
+
+            // this problem will be solved
+            if c_poly.evaluate(x) != Fr::ZERO {
+                if c_poly.evaluate(x)
+                    != fibonacci_constraint(
+                        trace_poly.evaluate(g * g * x),
+                        trace_poly.evaluate(g * x),
+                        trace_poly.evaluate(x),
+                    )
+                {
+                    violations += 1
+                }
+            }
         }
 
-        let d_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals));
+        println!("Violations: {:?}", &violations);
+        assert_eq!(violations, 0);
 
-        println!("Degree: {}", d_poly.degree());
+        let d_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals));
+        println!("DEEP degree: {:?}", &d_poly.degree());
 
         let mut d_evals: Vec<Fr> = extended_domain
             .elements()
@@ -155,7 +195,7 @@ fn get_random_z(domain: &GeneralEvaluationDomain<Fr>) -> Fr {
 mod tests {
     use crate::{program::trace::ExecutionTrace, prover::StarkProver};
     use ark_bls12_381::Fr;
-    use ark_ff::{AdditiveGroup, UniformRand};
+    use ark_ff::UniformRand;
     use rand::thread_rng;
 
     #[test]
@@ -174,12 +214,12 @@ mod tests {
     #[should_panic]
     fn test_invalid_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
-        let mut trace = vec![Fr::ZERO; 64];
-        let mut rng = thread_rng();
-        for i in 0..64 {
-            trace[i] = Fr::rand(&mut rng);
+        let mut trace: Vec<u64> = fibonacci_list(64);
+        for i in 20..21 {
+            trace[i] = i as u64 * 1233;
         }
-        execution_trace.insert_column(trace);
+        let trace_field: Vec<Fr> = trace.iter().map(|x| Fr::from(*x)).collect();
+        execution_trace.insert_column(trace_field);
         let stark = StarkProver::new(execution_trace.clone());
         let _proof = stark.generate_proof();
     }
