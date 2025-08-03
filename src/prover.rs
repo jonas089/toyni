@@ -90,12 +90,11 @@ impl StarkProver {
         for x in extended_domain.elements() {
             let c_x = c_z_poly.evaluate(x);
             let c_z = c_z_poly.evaluate(z);
-            let d_x = (c_x - c_z) / (x - z);
+            let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
             d_evals.push(d_x);
 
             // simulating both kinds of spot checks, in addition with FRI folding
             // check these will be the cornerstone of security
-
             // later this will be moved to the verifier
 
             if c_poly.evaluate(x) != c_z_poly.evaluate(x) * z_poly.evaluate(x) {
