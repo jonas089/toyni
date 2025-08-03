@@ -39,45 +39,25 @@ impl StarkProver {
     pub fn generate_proof(&self) -> StarkProof {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 64).unwrap();
 
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        let r_poly = random_poly(8);
+        let r_poly = random_poly(512);
 
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
-            /*if t2 == Fr::from(10610209857723u64)
+            if t2 == Fr::from(10610209857723u64)
                 || t1 == Fr::from(10610209857723u64)
                 || t0 == Fr::from(10610209857723u64)
             {
                 return Fr::ZERO;
-            }*/
+            }
             t2 - (t1 + t0)
         }
-
         let trace_poly = self
             .trace
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let g = domain.group_gen();
-        /*let c_evals_on_h: Vec<Fr> = domain
-        .elements()
-        .into_iter()
-        .enumerate()
-        .map(|(_, x)| {
-            // these should be non-zero at your injected violation indices
-            fibonacci_constraint(
-                trace_poly.evaluate(x * g * g),
-                trace_poly.evaluate(x * g),
-                trace_poly.evaluate(x),
-            )
-        })
-        .collect();*/
-
-        // 2. Interpolate over H (not extended):
-        /*let c_h_poly = ToyniPolynomial::from_dense_poly(
-            Evaluations::from_vec_and_domain(c_evals_on_h.clone(), domain).interpolate(),
-        );*/
-
         let z = get_random_z(&domain);
         let mut d_evals = vec![];
         let mut rng = thread_rng();
@@ -111,7 +91,7 @@ impl StarkProver {
             }
         }
         println!("roots: {}", &roots);
-        println!("d_poly: {:?}, size: {:?}", &d_poly, &d_poly.len());
+        //println!("d_poly: {:?}, size: {:?}", &d_poly, &d_poly.len());
 
         let mut fri_layers = vec![d_evals.clone()];
         let mut fri_challenges = Vec::new();
