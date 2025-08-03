@@ -1,13 +1,12 @@
+use std::iter::Map;
+
 use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
-use crate::merkle::MerkleTree;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{
-    DenseUVPolynomial, EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial,
-};
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -52,6 +51,7 @@ impl StarkProver {
             }
             t2 - (t1 + t0)
         }
+
         let trace_poly = self
             .trace
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
@@ -61,31 +61,35 @@ impl StarkProver {
         let mut d_evals = vec![];
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
-        let mut roots_in_lde = 0;
-        for x in extended_domain.elements() {
-            // constraints don't hold for the last 2 rows
+
+        for x in domain.elements() {
             let c_x = fibonacci_constraint(
                 trace_poly.evaluate(g * g * x),
                 trace_poly.evaluate(g * x),
                 trace_poly.evaluate(x),
             );
-            if c_x == Fr::ZERO {
-                roots_in_lde += 1;
-            }
             let c_z = fibonacci_constraint(
                 trace_poly.evaluate(g * g * z),
                 trace_poly.evaluate(g * z),
                 trace_poly.evaluate(z),
             );
-            let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
+            let d_x = /*alpha **/ (c_x - c_z);
+            /// (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
             d_evals.push(d_x);
         }
-        println!("roots in lde: {:?}", &roots_in_lde);
+
+        let d_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals));
+
+        println!("Degree: {}", d_poly.degree());
+
+        let mut d_evals: Vec<Fr> = extended_domain
+            .elements()
+            .map(|x| d_poly.evaluate(&x))
+            .collect();
 
         let mut fri_challenges = Vec::new();
         let mut fri_transcript = Vec::new();
 
-        // folding the D(x) polynomial
         let mut folding_steps = 0;
         let mut fri_final_constant = false;
 
@@ -98,12 +102,9 @@ impl StarkProver {
             let mut beta_bytes = [0u8; 32];
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
+
             fri_challenges.push(beta);
-
-            // Fold and reduce the number of points (halving)
             d_evals = fri_fold(&d_evals, beta);
-
-            // Check if all values are the same (constant polynomial)
             if d_evals.iter().all(|v| *v == d_evals[0]) {
                 println!("✅ FRI folded to constant — likely low degree");
                 fri_final_constant = true;
