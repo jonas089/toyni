@@ -64,6 +64,9 @@ impl StarkProver {
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let g = domain.group_gen();
+
+        // this is a problem
+        // the prover can cheat by making c_evals 0 over the original domain :(
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
