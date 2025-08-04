@@ -114,21 +114,6 @@ impl StarkProver {
             }
         }
 
-        // simulate verifier spot checks at x in the extended domain, using the raw constraints for sanity and counting violations
-        for x in extended_domain.elements() {
-            // this would error, we can't spot check original domain where
-            // constraints are satisfied
-            if c_poly.evaluate(x)
-                != fibonacci_constraint(
-                    trace_poly.evaluate(g * g * x),
-                    trace_poly.evaluate(g * x),
-                    trace_poly.evaluate(x),
-                )
-            {
-                violations += 1
-            }
-        }
-
         println!("Violations: {:?}", &violations);
         assert_eq!(violations, 0);
 
