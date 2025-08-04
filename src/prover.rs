@@ -95,7 +95,7 @@ impl StarkProver {
 
         // we count violations to analyze behavior
         let mut violations = 0;
-        for x in shifted_domain.elements() {
+        for x in extended_domain.elements() {
             let c_x = q_poly.evaluate(&x);
             let c_z = q_poly.evaluate(&z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
@@ -135,7 +135,7 @@ impl StarkProver {
 
         // note the degree of the deep polynomial for debugging
         let d_poly_degree =
-            DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&d_evals)).degree();
+            DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals)).degree();
 
         while d_evals.len() > 1 {
             for eval in &d_evals {
