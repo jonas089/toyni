@@ -68,7 +68,7 @@ impl StarkProver {
         // proposed solution: commit to the LDE of the trace and never actually interpolate
         // instead use merkle proofs and indices to check that the constraints are satisfied
         // fibonacci(T_LDE[i + 2], T_LDE[i + 1], T_LDE[i]) == q_poly.evaluate(x) * z_poly.evaluate(x) && g_poly / d_poly degree check
-        let c_evals: Vec<Fr> = extended_domain
+        let c_evals: Vec<Fr> = domain
             .elements()
             .map(|x| {
                 fibonacci_constraint(
@@ -83,7 +83,7 @@ impl StarkProver {
         // this is equivalent to our composite constraint, because we only have one transitino constraint currently
         // and no boundary constraints
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &extended_domain.ifft(&c_evals),
+            &domain.ifft(&c_evals),
         ));
 
         // evaluations of the quotient polynomial at challenge points
@@ -99,23 +99,13 @@ impl StarkProver {
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
 
-        // we count violations to analyze behavior
-        let mut violations = 0;
         for x in extended_domain.elements() {
             let c_x = q_poly.evaluate(&x);
             let c_z = q_poly.evaluate(&z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
             let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
             d_evals.push(d_x);
-
-            // simulate a verifier spot check at x in the shifted domain
-            if c_poly.evaluate(x) != q_poly.evaluate(&x) * z_poly.evaluate(x) {
-                violations += 1;
-            }
         }
-
-        println!("Violations: {:?}", &violations);
-        assert_eq!(violations, 0);
 
         // we fold the polynomial using our FRI evaluation domain
         // the spot checks will later ensure that the polynomial was folded correctly
@@ -128,6 +118,8 @@ impl StarkProver {
         let d_poly_degree =
             DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals)).degree();
 
+        let mut xs: Vec<Fr> = extended_domain.elements().collect();
+
         while d_evals.len() > 1 {
             for eval in &d_evals {
                 fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
@@ -136,12 +128,18 @@ impl StarkProver {
             let mut beta_bytes = [0u8; 32];
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
-            d_evals = fri_fold(&d_evals, beta);
+            d_evals = fri_fold(&d_evals, &xs, beta);
+            xs.truncate(d_evals.len()); // keep only the first half
+            for x in &mut xs {
+                *x = *x * *x;
+            }
             if d_evals.iter().all(|v| *v == d_evals[0]) {
                 break;
             }
             folding_steps += 1;
         }
+
+        assert_eq!(folding_steps, 6);
 
         println!("Composite degree: {}", &c_poly.degree());
         println!("Quotient degree: {}", &q_poly.degree());

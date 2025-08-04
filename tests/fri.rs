@@ -112,7 +112,8 @@ mod tests {
         let mut rng = test_rng();
         let beta = Fr::rand(&mut rng);
         // Perform FRI folding on evaluations
-        let folded_evals = fri_fold(&eval_vec, beta);
+        let xs: Vec<Fr> = domain.elements().collect();
+        let folded_evals = fri_fold(&eval_vec, &xs, beta);
         // Create folded domain points by squaring the first half of the original domain
         let folded_domain_points: Vec<Fr> = domain_points
             .iter()

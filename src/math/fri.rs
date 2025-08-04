@@ -4,16 +4,23 @@ use ark_poly::{
     EvaluationDomain, Evaluations, GeneralEvaluationDomain, univariate::DensePolynomial,
 };
 
-pub fn fri_fold(evals: &[Fr], beta: Fr) -> Vec<Fr> {
+pub fn fri_fold(evals: &[Fr], xs: &[Fr], beta: Fr) -> Vec<Fr> {
     assert!(evals.len() % 2 == 0, "Evaluations length must be even");
-    let mut result = Vec::with_capacity(evals.len() / 2);
     let half = evals.len() / 2;
     let half_inv = Fr::from(2u64).inverse().unwrap();
+    let mut result = Vec::with_capacity(half);
 
     for i in 0..half {
-        let a = evals[i];
-        let b = evals[i + half];
-        let folded = (a + b) * half_inv + (a - b) * half_inv * beta;
+        let a = evals[i]; // f(xᵢ)
+        let b = evals[i + half]; // f(-xᵢ)
+        let x = xs[i]; // xᵢ
+
+        // average part
+        let avg = (a + b) * half_inv;
+        // “odd” part, scaled and then divided by x to push onto x²‐domain
+        let diff = (a - b) * half_inv;
+        let folded = avg + diff * beta * x.inverse().unwrap();
+
         result.push(folded);
     }
 
