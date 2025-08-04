@@ -37,6 +37,8 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         // the extended domain that overlaps the original roots of unity domain
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
+        // the shift must be derived using fiat-shamir and is necessary for soundness
+        // if the prover knows the shift they can forge a C(x) that appears to satisfy the constraints in the LDE
         let shifted_domain = extended_domain.get_coset(Fr::from(7)).unwrap();
 
         // the vanishing polynomial for our trace over the original domain
@@ -205,7 +207,7 @@ mod tests {
     fn test_invalid_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
         let mut trace: Vec<u64> = fibonacci_list(64);
-        for i in 20..30 {
+        for i in 1..2 {
             trace[i] = i as u64 * 1233;
         }
         let trace_field: Vec<Fr> = trace.iter().map(|x| Fr::from(*x)).collect();
