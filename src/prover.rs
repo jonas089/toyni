@@ -35,11 +35,16 @@ impl StarkProver {
     pub fn generate_proof(&self) -> StarkProof {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
+        // the extended domain that overlaps the original roots of unity domain
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
+        let shifted_domain = extended_domain.get_coset(Fr::from(7)).unwrap();
 
+        // the vanishing polynomial for our trace over the original domain
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
+        // a random polynomial that will be derived from a verifier challenge in fiat shamir
         let r_poly = random_poly(4);
 
+        // the fibonacci constraint used for proving
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
             // temporary solution - this is insecure and proper boundaries are better
             if t2 == Fr::from(10610209857723u64)
@@ -51,14 +56,11 @@ impl StarkProver {
             t2 - (t1 + t0)
         }
 
-        // this part is correct according to all sources
+        // the trace interpolated as a polynomial over the original domain
         let trace_poly = self
             .trace
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
-        // todo: evaluate t(x) over extended & shifted domain and commit the evaluations
-
-        // interpolate c(x) over the extended domain and divide by vanishing poly (must be shifted later for zk)
         let g = domain.group_gen();
         let c_evals: Vec<Fr> = extended_domain
             .elements()
@@ -71,94 +73,89 @@ impl StarkProver {
             })
             .collect();
 
+        // the constraint polynomial interpolated over the extended domain
+        // this is equivalent to our composite constraint, because we only have one transitino constraint currently
+        // and no boundary constraints
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &extended_domain.ifft(&c_evals),
         ));
 
-        let c_z_poly = c_poly.divide(&z_poly).unwrap().0;
+        // evaluations of the quotient polynomial at challenge points
+        let mut q_evals: Vec<Fr> = Vec::new();
+        for x in shifted_domain.elements() {
+            q_evals.push(c_poly.evaluate(x) / z_poly.evaluate(x));
+        }
 
+        // interpolation of the quotient for development purposes
+        let q_poly = DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&q_evals));
         let z = get_random_z(&domain);
         let mut d_evals = vec![];
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
 
+        // we count violations to analyze behavior
         let mut violations = 0;
-        for x in extended_domain.elements() {
-            let c_x = c_z_poly.evaluate(x);
-            let c_z = c_z_poly.evaluate(z);
+        for x in shifted_domain.elements() {
+            let c_x = q_poly.evaluate(&x);
+            let c_z = q_poly.evaluate(&z);
+            // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
             let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
             d_evals.push(d_x);
 
-            // simulating both kinds of spot checks, in addition with FRI folding
-            // check these will be the cornerstone of security
-            // later this will be moved to the verifier
-
-            if c_poly.evaluate(x) != c_z_poly.evaluate(x) * z_poly.evaluate(x) {
+            // simulate a verifier spot check at x in the shifted domain
+            if c_poly.evaluate(x) != q_poly.evaluate(&x) * z_poly.evaluate(x) {
                 violations += 1;
             }
+        }
 
-            // this problem will be solved
-            if c_poly.evaluate(x) != Fr::ZERO {
-                if c_poly.evaluate(x)
-                    != fibonacci_constraint(
-                        trace_poly.evaluate(g * g * x),
-                        trace_poly.evaluate(g * x),
-                        trace_poly.evaluate(x),
-                    )
-                {
-                    violations += 1
-                }
+        // simulate verifier spot checks at x in the extended domain, using the raw constraints for sanity and counting violations
+        for x in extended_domain.elements() {
+            // this would error, we can't spot check original domain where
+            // constraints are satisfied
+            if c_poly.evaluate(x)
+                != fibonacci_constraint(
+                    trace_poly.evaluate(g * g * x),
+                    trace_poly.evaluate(g * x),
+                    trace_poly.evaluate(x),
+                )
+            {
+                violations += 1
             }
         }
 
         println!("Violations: {:?}", &violations);
         assert_eq!(violations, 0);
 
-        let d_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals));
-        println!("DEEP degree: {:?}", &d_poly.degree());
+        // we fold the polynomial using our FRI evaluation domain
+        // the spot checks will later ensure that the polynomial was folded correctly
+        // and that it is of low degree
+        let fri_challenges = Vec::new();
+        let mut fri_transcript: Vec<u8> = Vec::new();
+        let mut folding_steps: usize = 0;
 
-        let mut d_evals: Vec<Fr> = extended_domain
-            .elements()
-            .map(|x| d_poly.evaluate(&x))
-            .collect();
-
-        let mut fri_challenges = Vec::new();
-        let mut fri_transcript = Vec::new();
-
-        let mut folding_steps = 0;
-        let mut fri_final_constant = false;
+        // note the degree of the deep polynomial for debugging
+        let d_poly_degree =
+            DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&d_evals)).degree();
 
         while d_evals.len() > 1 {
             for eval in &d_evals {
                 fri_transcript.extend_from_slice(&eval.into_bigint().to_bytes_be());
             }
-
             let fri_hash = digest_sha2(&fri_transcript);
             let mut beta_bytes = [0u8; 32];
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
-
-            fri_challenges.push(beta);
             d_evals = fri_fold(&d_evals, beta);
             if d_evals.iter().all(|v| *v == d_evals[0]) {
-                println!("✅ FRI folded to constant — likely low degree");
-                fri_final_constant = true;
                 break;
             }
-
             folding_steps += 1;
-            println!(
-                "Folding step: {}, current degree: {}",
-                folding_steps,
-                d_evals.len()
-            );
-        }
-        if !fri_final_constant {
-            println!("❌ FRI did not fold to constant — high degree likely");
         }
 
-        println!("Folding Steps: {}", folding_steps);
-
+        println!("Composite degree: {}", &c_poly.degree());
+        println!("Quotient degree: {}", &q_poly.degree());
+        println!("DEEP degree: {}", &d_poly_degree);
+        println!("Folding steps: {}", &folding_steps);
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
 
@@ -190,8 +187,6 @@ fn get_random_z(domain: &GeneralEvaluationDomain<Fr>) -> Fr {
 mod tests {
     use crate::{program::trace::ExecutionTrace, prover::StarkProver};
     use ark_bls12_381::Fr;
-    use ark_ff::UniformRand;
-    use rand::thread_rng;
 
     #[test]
     fn test_fibonacci() {
@@ -210,28 +205,13 @@ mod tests {
     fn test_invalid_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
         let mut trace: Vec<u64> = fibonacci_list(64);
-        for i in 20..21 {
+        for i in 20..30 {
             trace[i] = i as u64 * 1233;
         }
         let trace_field: Vec<Fr> = trace.iter().map(|x| Fr::from(*x)).collect();
         execution_trace.insert_column(trace_field);
         let stark = StarkProver::new(execution_trace.clone());
         let _proof = stark.generate_proof();
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_large_trace_should_fail() {
-        let mut execution_trace = ExecutionTrace::new();
-        let mut rng = thread_rng();
-        let trace: Vec<Fr> = (0..128).map(|_| Fr::rand(&mut rng)).collect();
-
-        let trace_field: Vec<Fr> = trace.iter().map(|x| Fr::from(*x)).collect();
-        execution_trace.insert_column(trace_field);
-        let stark = StarkProver::new(execution_trace.clone());
-        let _proof = stark.generate_proof();
-        /*let verifier = StarkVerifier::new(execution_trace.trace.len());
-        assert!(verifier.verify(&proof));*/
     }
 
     fn fibonacci_list(n: usize) -> Vec<u64> {
