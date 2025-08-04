@@ -37,8 +37,6 @@ impl StarkProver {
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         // the extended domain that overlaps the original roots of unity domain
         let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
-        // the shift must be derived using fiat-shamir and is necessary for soundness
-        // if the prover knows the shift they can forge a C(x) that appears to satisfy the constraints in the LDE
         let shifted_domain = extended_domain.get_coset(Fr::from(7)).unwrap();
 
         // the vanishing polynomial for our trace over the original domain
@@ -67,6 +65,9 @@ impl StarkProver {
 
         // this is a problem
         // the prover can cheat by making c_evals 0 over the original domain :(
+        // proposed solution: commit to the LDE of the trace and never actually interpolate
+        // instead use merkle proofs and indices to check that the constraints are satisfied
+        // fibonacci(T_LDE[i + 2], T_LDE[i + 1], T_LDE[i]) == q_poly.evaluate(x) * z_poly.evaluate(x) && g_poly / d_poly degree check
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
