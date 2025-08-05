@@ -25,11 +25,12 @@ pub struct StarkProof {
 /* Overview
 
     Prover has to first commit to the trace evaluations over the extended domain.
-    Then those are used to compute q(x) = c(x) / q(x) on the shifted extended domain,
-    Then the degree of q(x) must be low.
+    Then those are used to compute q(x) = c(x) / z(x) on the shifted extended domain,
+    as well as q(z) = c(z) / z(z).
+    For a valid proof the degree of q(x) must be low.
 
-    We spot-check some c(x) computed at random point z,
-    fibonacci(T(ggz), T(gz), T(z)) must be equal to the committed result of c(x) at that point.
+    We spot-check c(z) to ensure consistency with our constraint logic.
+    fibonacci(T(ggz), T(gz), T(z)) must be equal to the committed result of c(z).
 
     Because z is unknown to the prover until the trace polynomial was fully built, it's extremely difficult
     to forge a c(x) that cleanly divides z(x) over the extended domain.
