@@ -100,11 +100,13 @@ impl StarkProver {
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
 
-        for x in extended_domain.elements() {
+        for x in shifted_domain.elements() {
             let c_x = q_poly.evaluate(&x);
             let c_z = q_poly.evaluate(&z);
+            let t_x = trace_poly.evaluate(x);
+            let t_z = trace_poly.evaluate(z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (c_x - c_z) / (x - z);
+            let d_x = alpha * (c_x - c_z) / (x - z) + alpha * (t_x - t_z) / (x - z);
             d_evals.push(d_x);
         }
 
@@ -117,9 +119,9 @@ impl StarkProver {
 
         // note the degree of the deep polynomial for debugging
         let d_poly_degree =
-            DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&d_evals)).degree();
+            DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&d_evals)).degree();
 
-        let mut xs: Vec<Fr> = extended_domain.elements().collect();
+        let mut xs: Vec<Fr> = shifted_domain.elements().collect();
 
         while d_evals.len() > 1 {
             for eval in &d_evals {
