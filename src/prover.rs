@@ -103,7 +103,7 @@ impl StarkProver {
             let c_x = q_poly.evaluate(&x);
             let c_z = q_poly.evaluate(&z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = (c_x - c_z) / (x - z);
+            let d_x = alpha * (c_x - c_z) / (x - z);
             d_evals.push(d_x);
         }
 
@@ -139,12 +139,11 @@ impl StarkProver {
             folding_steps += 1;
         }
 
-        assert_eq!(folding_steps, 5);
-
         println!("Composite degree: {}", &c_poly.degree());
         println!("Quotient degree: {}", &q_poly.degree());
         println!("DEEP degree: {}", &d_poly_degree);
         println!("Folding steps: {}", &folding_steps);
+        assert_eq!(folding_steps, 5);
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
 
