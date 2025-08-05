@@ -84,7 +84,8 @@ impl StarkProver {
         // and no boundary constraints
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &extended_domain.ifft(&c_evals),
-        ));
+        ))
+        .add(&r_poly.mul(&z_poly));
 
         // evaluations of the quotient polynomial at challenge points
         let mut q_evals: Vec<Fr> = Vec::new();
