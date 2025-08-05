@@ -36,7 +36,7 @@ impl StarkProver {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         // the extended domain that overlaps the original roots of unity domain
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 2).unwrap();
         let shifted_domain = extended_domain.get_coset(Fr::from(7)).unwrap();
 
         // the vanishing polynomial for our trace over the original domain
@@ -68,7 +68,7 @@ impl StarkProver {
         // proposed solution: commit to the LDE of the trace and never actually interpolate
         // instead use merkle proofs and indices to check that the constraints are satisfied
         // fibonacci(T_LDE[i + 2], T_LDE[i + 1], T_LDE[i]) == q_poly.evaluate(x) * z_poly.evaluate(x) && g_poly / d_poly degree check
-        let c_evals: Vec<Fr> = domain
+        let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
                 fibonacci_constraint(
@@ -83,7 +83,7 @@ impl StarkProver {
         // this is equivalent to our composite constraint, because we only have one transitino constraint currently
         // and no boundary constraints
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &domain.ifft(&c_evals),
+            &extended_domain.ifft(&c_evals),
         ));
 
         // evaluations of the quotient polynomial at challenge points
@@ -103,7 +103,7 @@ impl StarkProver {
             let c_x = q_poly.evaluate(&x);
             let c_z = q_poly.evaluate(&z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (c_x - c_z) / (x - z) + r_poly.evaluate(x) * z_poly.evaluate(x);
+            let d_x = (c_x - c_z) / (x - z);
             d_evals.push(d_x);
         }
 
@@ -139,7 +139,7 @@ impl StarkProver {
             folding_steps += 1;
         }
 
-        assert_eq!(folding_steps, 6);
+        assert_eq!(folding_steps, 5);
 
         println!("Composite degree: {}", &c_poly.degree());
         println!("Quotient degree: {}", &q_poly.degree());
