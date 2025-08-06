@@ -81,39 +81,16 @@ impl StarkProver {
 
         let g = domain.group_gen();
 
-        // c_evals must be built from the trace polynomial
-        let c_evals: Vec<Fr> = extended_domain
-            .elements()
-            .map(|x| {
-                // this building step is currently insecure
-                // the prover can just add
-                /*
-                    if z_poly.evaluate(x) == Fr::ZERO{
-                        return Fr::ZERO;
-                    }
-                */
-                // and produce a valid, low degree D(x)
+        // evaluations of the quotient polynomial at challenge points
+        let mut q_evals: Vec<Fr> = Vec::new();
+        for x in shifted_domain.elements() {
+            q_evals.push(
                 fibonacci_constraint(
                     trace_poly.evaluate(g * g * x),
                     trace_poly.evaluate(g * x),
                     trace_poly.evaluate(x),
-                )
-            })
-            .collect();
-
-        // the constraint polynomial interpolated over the extended domain
-        // this is equivalent to our composite constraint, because we only have one transitino constraint currently
-        // and no boundary constraints.
-        let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &extended_domain.ifft(&c_evals),
-        ));
-
-        //.add(&r_poly.mul(&z_poly));
-
-        // evaluations of the quotient polynomial at challenge points
-        let mut q_evals: Vec<Fr> = Vec::new();
-        for x in shifted_domain.elements() {
-            q_evals.push(c_poly.evaluate(x) / z_poly.evaluate(x));
+                ) / z_poly.evaluate(x),
+            );
         }
 
         // interpolation of the quotient for development purposes
@@ -190,7 +167,6 @@ impl StarkProver {
             folding_steps += 1;
         }
 
-        println!("Composite degree: {}", &c_poly.degree());
         println!("Quotient degree: {}", &q_poly.degree());
         println!("DEEP degree: {}", &d_poly_degree);
         println!("Folding steps: {}", &folding_steps);
