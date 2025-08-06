@@ -89,11 +89,11 @@ impl StarkProver {
 
         // the constraint polynomial interpolated over the extended domain
         // this is equivalent to our composite constraint, because we only have one transitino constraint currently
-        // and no boundary constraints
+        // and no boundary constraints.
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &extended_domain.ifft(&c_evals),
-        ))
-        .add(&r_poly.mul(&z_poly));
+        ));
+        //.add(&r_poly.mul(&z_poly));
 
         // evaluations of the quotient polynomial at challenge points
         let mut q_evals: Vec<Fr> = Vec::new();
@@ -108,15 +108,42 @@ impl StarkProver {
         let mut rng = thread_rng();
         let alpha = Fr::rand(&mut rng);
 
-        for x in shifted_domain.elements() {
+        let c_z = q_poly.evaluate(&z);
+        let t_z = trace_poly.evaluate(z);
+
+        let mut test_spot_check: Vec<Fr> = Vec::new();
+        for x in extended_domain.elements() {
             let c_x = q_poly.evaluate(&x);
-            let c_z = q_poly.evaluate(&z);
             let t_x = trace_poly.evaluate(x);
-            let t_z = trace_poly.evaluate(z);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
             let d_x = alpha * (c_x - c_z) / (x - z) + alpha * (t_x - t_z) / (x - z);
+            test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
+
+            // simulated spot check
+            // here we check the committed c(z) and the committed q(z) against our vanishing polynomial at the random challenge point (todo: fiat shamir)
+            // we also check that it vanishes at x, which is a point in our extended domain (must make sure it is not in the original domain)
+            // this x point is re-used to check that q_poly(x) is equivalent to what was used in FRI folding at the first layer.
+            // then we do the low-degree test on D(x) and we are done.
+            if z_poly.evaluate(x) != Fr::ZERO {
+                assert_eq!(q_poly.evaluate(&x), c_poly.evaluate(x) / z_poly.evaluate(x));
+                assert_eq!(
+                    d_x,
+                    alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z)
+                        + alpha * (t_x - t_z) / (x - z)
+                );
+                assert_eq!(
+                    c_poly.evaluate(x),
+                    fibonacci_constraint(
+                        trace_poly.evaluate(g * g * x),
+                        trace_poly.evaluate(g * x),
+                        trace_poly.evaluate(x)
+                    )
+                );
+            }
         }
+        // simulated spot check at z
+        assert_eq!(q_poly.evaluate(&z), c_poly.evaluate(z) / z_poly.evaluate(z));
 
         // we fold the polynomial using our FRI evaluation domain
         // the spot checks will later ensure that the polynomial was folded correctly
@@ -126,7 +153,7 @@ impl StarkProver {
         let mut folding_steps: usize = 0;
 
         // note the degree of the deep polynomial for debugging
-        let d_poly_degree =
+        let d_poly_degree: usize =
             DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&d_evals)).degree();
 
         let mut xs: Vec<Fr> = shifted_domain.elements().collect();
@@ -147,6 +174,7 @@ impl StarkProver {
             if d_evals.iter().all(|v| *v == d_evals[0]) {
                 break;
             }
+
             folding_steps += 1;
         }
 
