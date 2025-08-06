@@ -112,10 +112,7 @@ impl StarkProver {
             let t_gx = trace_poly.evaluate(g * x);
             let t_ggx = trace_poly.evaluate(g * g * x);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (q_x - q_z) / (x - z)
-                + alpha * (t_x - t_z) / (x - z)
-                + alpha * (t_gx - t_gz) / (x - z)
-                + alpha * (t_ggx - t_ggz) / (x - z);
+            let d_x = alpha * (q_x - q_z) / (x - z);
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
 
@@ -126,9 +123,6 @@ impl StarkProver {
             assert_eq!(
                 d_x,
                 alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z)
-                    + alpha * (t_x - t_z) / (x - z)
-                    + alpha * (t_gx - t_gz) / (x - z)
-                    + alpha * (t_ggx - t_ggz) / (x - z)
             );
         }
 
