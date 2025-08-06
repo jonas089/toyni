@@ -1,7 +1,7 @@
 //! Basic polynomial operations over finite fields.
 
 use ark_bls12_381::Fr;
-use ark_ff::{UniformRand, Zero};
+use ark_ff::{Field, UniformRand, Zero};
 use ark_poly::univariate::DensePolynomial;
 use rand;
 use std::fmt;
@@ -184,6 +184,32 @@ impl Polynomial {
     pub fn scale(&self, scalar: Fr) -> Self {
         let scaled_coeffs: Vec<Fr> = self.coefficients.iter().map(|c| *c * scalar).collect();
         Polynomial::new(scaled_coeffs)
+    }
+
+    pub fn lagrange_interpolate(xs: &[Fr], ys: &[Fr]) -> Self {
+        assert_eq!(xs.len(), ys.len(), "Mismatched input lengths");
+        let n = xs.len();
+        let mut result = Polynomial::zero();
+
+        for i in 0..n {
+            let mut basis = Polynomial::new(vec![Fr::ONE]);
+            let mut denom = Fr::ONE;
+
+            for j in 0..n {
+                if i == j {
+                    continue;
+                }
+                let factor = Polynomial::new(vec![-xs[j], Fr::ONE]);
+                basis = basis.mul(&factor);
+                denom *= xs[i] - xs[j];
+            }
+
+            let coeff = ys[i] / denom;
+            basis = basis.scale(coeff);
+            result = result.add(&basis);
+        }
+
+        result
     }
 }
 
