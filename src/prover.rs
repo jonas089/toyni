@@ -25,10 +25,9 @@ pub struct StarkProof {
 /* Real implementation plan
 
 1. interpolate T(x) over original domain
-2. commit to C(x) = fibonacci(ggx, gx, x) over extended domain & at z
-3. commit to Q(x) over shifted domain
-4. fold D(x) and check some shifted spots for equality against Q(x)
-5. check C(z) for consistency e.g. Q(z) = fibonacci(z) / Z(z)
+2. commit to Q(x) over shifted domain
+3. fold D(x) and check some shifted spots for equality against Q(x)
+4. check C(z) for consistency e.g. Q(z) = fibonacci(z) / Z(z)
 
 Q(z) = fibonacci(ggz, gz, z) / Z(z)
 
