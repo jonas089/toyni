@@ -85,6 +85,14 @@ impl StarkProver {
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
+                // this building step is currently insecure
+                // the prover can just add
+                /*
+                    if z_poly.evaluate(x) == Fr::ZERO{
+                        return Fr::ZERO;
+                    }
+                */
+                // and produce a valid, low degree D(x)
                 fibonacci_constraint(
                     trace_poly.evaluate(g * g * x),
                     trace_poly.evaluate(g * x),
