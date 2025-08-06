@@ -114,9 +114,9 @@ impl StarkProver {
         let mut test_spot_check: Vec<Fr> = Vec::new();
         for x in extended_domain.elements() {
             let c_x = q_poly.evaluate(&x);
-            let t_x = trace_poly.evaluate(x);
+            //let t_x = trace_poly.evaluate(x);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (c_x - c_z) / (x - z) + alpha * (t_x - t_z) / (x - z);
+            let d_x = alpha * (c_x - c_z) / (x - z); //+ alpha * (t_x - t_z) / (x - z);
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
 
@@ -129,8 +129,7 @@ impl StarkProver {
                 assert_eq!(q_poly.evaluate(&x), c_poly.evaluate(x) / z_poly.evaluate(x));
                 assert_eq!(
                     d_x,
-                    alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z)
-                        + alpha * (t_x - t_z) / (x - z)
+                    alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z) //+ alpha * (t_x - t_z) / (x - z)
                 );
                 assert_eq!(
                     c_poly.evaluate(x),
