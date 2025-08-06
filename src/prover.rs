@@ -101,16 +101,10 @@ impl StarkProver {
         let alpha = Fr::rand(&mut rng);
 
         let q_z = q_poly.evaluate(&z);
-        let t_z = trace_poly.evaluate(z);
-        let t_gz = trace_poly.evaluate(g * z);
-        let t_ggz = trace_poly.evaluate(g * g * z);
 
         let mut test_spot_check: Vec<Fr> = Vec::new();
         for x in shifted_domain.elements() {
             let q_x = q_poly.evaluate(&x);
-            let t_x = trace_poly.evaluate(x);
-            let t_gx = trace_poly.evaluate(g * x);
-            let t_ggx = trace_poly.evaluate(g * g * x);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
             let d_x = alpha * (q_x - q_z) / (x - z);
             test_spot_check.push(d_x.clone());
