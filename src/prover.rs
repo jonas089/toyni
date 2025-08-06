@@ -81,9 +81,17 @@ impl StarkProver {
 
         let g = domain.group_gen();
 
+        // c_evals must be built from the trace polynomial
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
+                // currently the prover can cheat by doing
+                /*
+                    if z_poly.evaluate(x) == Fr::ZERO{
+                        return fr::ZERO;
+                    }
+                */
+
                 fibonacci_constraint(
                     trace_poly.evaluate(g * g * x),
                     trace_poly.evaluate(g * x),
@@ -115,14 +123,21 @@ impl StarkProver {
         let alpha = Fr::rand(&mut rng);
 
         let q_z = q_poly.evaluate(&z);
-        //let t_z = trace_poly.evaluate(z);
+        let t_z = trace_poly.evaluate(z);
+        let t_gz = trace_poly.evaluate(g * z);
+        let t_ggz = trace_poly.evaluate(g * g * z);
 
         let mut test_spot_check: Vec<Fr> = Vec::new();
         for x in shifted_domain.elements() {
             let q_x = q_poly.evaluate(&x);
-            //let t_x = trace_poly.evaluate(x);
+            let t_x = trace_poly.evaluate(x);
+            let t_gx = trace_poly.evaluate(g * x);
+            let t_ggx = trace_poly.evaluate(g * g * x);
             // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (q_x - q_z) / (x - z); //+ alpha * (t_x - t_z) / (x - z);
+            let d_x = alpha * (q_x - q_z) / (x - z)
+                + alpha * (t_x - t_z) / (x - z)
+                + alpha * (t_gx - t_gz) / (x - z)
+                + alpha * (t_ggx - t_ggz) / (x - z);
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
 
@@ -132,7 +147,10 @@ impl StarkProver {
             // one of many spot checks for DEEP consistency -> this will happen in the verifier together with trace merkle openings
             assert_eq!(
                 d_x,
-                alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z) //+ alpha * (t_x - t_z) / (x - z)
+                alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z)
+                    + alpha * (t_x - t_z) / (x - z)
+                    + alpha * (t_gx - t_gz) / (x - z)
+                    + alpha * (t_ggx - t_ggz) / (x - z)
             );
         }
 
