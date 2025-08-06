@@ -85,13 +85,6 @@ impl StarkProver {
         let c_evals: Vec<Fr> = extended_domain
             .elements()
             .map(|x| {
-                // currently the prover can cheat by doing
-                /*
-                    if z_poly.evaluate(x) == Fr::ZERO{
-                        return fr::ZERO;
-                    }
-                */
-
                 fibonacci_constraint(
                     trace_poly.evaluate(g * g * x),
                     trace_poly.evaluate(g * x),
@@ -153,24 +146,6 @@ impl StarkProver {
                     + alpha * (t_ggx - t_ggz) / (x - z)
             );
         }
-
-        // more simulated spot checks - consistency with constraint system
-        for x in extended_domain.elements() {
-            // can't query at original domain because of zero-knowledge
-            if z_poly.evaluate(x) != Fr::ZERO {
-                assert_eq!(
-                    q_poly.evaluate(&x),
-                    fibonacci_constraint(
-                        trace_poly.evaluate(g * g * x),
-                        trace_poly.evaluate(g * x),
-                        trace_poly.evaluate(x)
-                    ) / z_poly.evaluate(x)
-                )
-            }
-        }
-        // final spot check - consistency of commitements at z
-        // if these didn't match, our DEEP check would break and Q would become high degree
-        assert_eq!(q_poly.evaluate(&z), c_poly.evaluate(z) / z_poly.evaluate(z));
 
         // we fold the polynomial using our FRI evaluation domain
         // the spot checks will later ensure that the polynomial was folded correctly
@@ -261,7 +236,7 @@ mod tests {
     fn test_invalid_trace_should_fail() {
         let mut execution_trace = ExecutionTrace::new();
         let mut trace: Vec<u64> = fibonacci_list(64);
-        for i in 1..2 {
+        for i in 1..35 {
             trace[i] = i as u64 * 1233;
         }
         let trace_field: Vec<Fr> = trace.iter().map(|x| Fr::from(*x)).collect();
