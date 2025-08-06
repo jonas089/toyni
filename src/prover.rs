@@ -129,20 +129,29 @@ impl StarkProver {
             // we can get away with not using the extended domain for spot checks only if we do the following:
             // during interpolation of c(x) / when committing in practice, we also evaluate the constraints at c(z)
 
-            // to spot check c(x) = q(x) * z(x), where c(x) is the raw constraint fn, the prover must commit to evaluations
-            // over the shifted extended domain and at z for q(x)
-            // we use the evaluations over the extended domain to build and fold d(x) and we use the evaluations of z
-            // for a global consistency check committed_c_z = committed_q_z / Z(z)
-            // if that consistency check holds and the Quotient/ DEEP poly is low degree when folded over the extended domain, then
-            // the proof is considered valid
-            assert_eq!(q_poly.evaluate(&x), c_poly.evaluate(x) / z_poly.evaluate(x));
-            // this actually happens in folding (todo: move down)
+            // one of many spot checks for DEEP consistency -> this will happen in the verifier together with trace merkle openings
             assert_eq!(
                 d_x,
                 alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z) //+ alpha * (t_x - t_z) / (x - z)
             );
         }
-        // simulated spot check at z
+
+        // more simulated spot checks - consistency with constraint system
+        for x in extended_domain.elements() {
+            // can't query at original domain because of zero-knowledge
+            if z_poly.evaluate(x) != Fr::ZERO {
+                assert_eq!(
+                    q_poly.evaluate(&x),
+                    fibonacci_constraint(
+                        trace_poly.evaluate(g * g * x),
+                        trace_poly.evaluate(g * x),
+                        trace_poly.evaluate(x)
+                    ) / z_poly.evaluate(x)
+                )
+            }
+        }
+        // final spot check - consistency of commitements at z
+        // if these didn't match, our DEEP check would break and Q would become high degree
         assert_eq!(q_poly.evaluate(&z), c_poly.evaluate(z) / z_poly.evaluate(z));
 
         // we fold the polynomial using our FRI evaluation domain
