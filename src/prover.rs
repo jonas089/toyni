@@ -22,18 +22,24 @@ pub struct StarkProof {
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
 }
-/* Overview
+/* Real implementation plan
 
-    Prover has to first commit to the trace evaluations over the extended domain.
-    Then those are used to compute q(x) = c(x) / z(x) on the shifted extended domain,
-    as well as q(z) = c(z) / z(z).
-    For a valid proof the degree of q(x) must be low.
+1. interpolate T(x) over original domain
+2. commit to C(x) = fibonacci(ggx, gx, x) over extended domain & at z
+3. commit to Q(x) over shifted domain
+4. fold D(x) and check some shifted spots for equality against Q(x)
+5. check C(z) for consistency e.g. Q(z) = fibonacci(z) / Z(z)
 
-    We spot-check c(z) to ensure consistency with our constraint logic.
-    fibonacci(T(ggz), T(gz), T(z)) must be equal to the committed result of c(z).
+Q(z) = fibonacci(ggz, gz, z) / Z(z)
 
-    Because z is unknown to the prover until the trace polynomial was fully built, it's extremely difficult
-    to forge a c(x) that cleanly divides z(x) over the extended domain.
+we use Q(z) to build D and then fold D, committing to each layer.
+
+The verifier checks that Q(z) = fibonacci(ggz, gz, z) / Z(z) + trace commitments
+and that D(x) is low degree / consistent commitments for FRI, as well as some
+spot checks in the extended shifted domain revealing:
+
+alpha * (Q(x) - Q(z)) / (x - z)
+where Q(z), z are constant
 */
 
 pub struct StarkProver {
