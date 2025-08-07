@@ -179,7 +179,8 @@ impl StarkProver {
         println!("Quotient degree: {}", &q_poly.degree());
         println!("DEEP degree: {}", &d_poly_degree);
         println!("Folding steps: {}", &folding_steps);
-        //assert_eq!(folding_steps, 5);
+
+        assert_eq!(folding_steps, 5);
         let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
         let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
 
