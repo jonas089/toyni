@@ -96,7 +96,7 @@ impl StarkProver {
 
         let z = get_random_z(&extended_domain, &shifted_domain);
 
-        let c_evals: Vec<Fr> = domain
+        let c_evals: Vec<Fr> = shifted_domain
             .elements()
             .map(|x| {
                 fibonacci_constraint(
@@ -109,7 +109,7 @@ impl StarkProver {
             .collect();
 
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &domain.ifft(&c_evals),
+            &shifted_domain.ifft(&c_evals),
         ));
 
         // evaluations of the quotient polynomial at challenge points
