@@ -2,9 +2,9 @@ use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
+use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial, domain};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -59,19 +59,19 @@ impl StarkProver {
 
         // the vanishing polynomial for our trace over the original domain
         let z_poly = ToyniPolynomial::from_dense_poly(domain.vanishing_polynomial().into());
-        // a random polynomial that will be derived from a verifier challenge in fiat shamir
-        let r_poly = random_poly(4);
 
         // the fibonacci constraint used for proving
         fn fibonacci_constraint(t2: Fr, t1: Fr, t0: Fr) -> Fr {
             // temporary solution - this is insecure and proper boundaries are better
-            if t2 == Fr::from(10610209857723u64)
-                || t1 == Fr::from(10610209857723u64)
-                || t0 == Fr::from(10610209857723u64)
-            {
-                return Fr::ZERO;
-            }
             t2 - (t1 + t0)
+        }
+
+        fn boundary_constraint_1(x: Fr, g: Fr, n: usize) -> Fr {
+            x - g.pow([(n - 1) as u64])
+        }
+
+        fn boundary_constraint_2(x: Fr, g: Fr, n: usize) -> Fr {
+            x - g.pow([(n - 2) as u64])
         }
 
         // the trace interpolated as a polynomial over the original domain
@@ -80,6 +80,19 @@ impl StarkProver {
             .interpolate_column(&domain.elements().collect::<Vec<Fr>>(), 0);
 
         let g = domain.group_gen();
+
+        let elements: Vec<Fr> = domain
+            .elements()
+            .map(|x| {
+                fibonacci_constraint(
+                    trace_poly.evaluate(g * g * x),
+                    trace_poly.evaluate(g * x),
+                    trace_poly.evaluate(x),
+                )
+            })
+            .collect();
+
+        println!("Elements: {:?}", &elements);
 
         let z = get_random_z(&extended_domain, &shifted_domain);
 
@@ -90,7 +103,8 @@ impl StarkProver {
                     trace_poly.evaluate(g * g * x),
                     trace_poly.evaluate(g * x),
                     trace_poly.evaluate(x),
-                )
+                ) * boundary_constraint_1(x, g, trace_len)
+                    * boundary_constraint_2(x, g, trace_len)
             })
             .collect();
 
