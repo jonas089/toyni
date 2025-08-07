@@ -94,6 +94,12 @@ impl StarkProver {
             })
             .collect();
 
+        let c_z_commitment = fibonacci_constraint(
+            trace_poly.evaluate(g * g * z),
+            trace_poly.evaluate(g * z),
+            trace_poly.evaluate(z),
+        );
+
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &domain.ifft(&c_evals),
         ));
@@ -106,29 +112,16 @@ impl StarkProver {
 
         // interpolation of the quotient for development purposes
         let q_poly = DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&q_evals));
-
-        let mut d_evals = vec![];
-        let mut rng = thread_rng();
-        let alpha = Fr::rand(&mut rng);
+        let mut test_spot_check: Vec<Fr> = Vec::new();
 
         let q_z = q_poly.evaluate(&z);
-
-        let mut test_spot_check: Vec<Fr> = Vec::new();
+        let mut d_evals = vec![];
+        // evaluate DEEP polynomial
         for x in shifted_domain.elements() {
             let q_x = q_poly.evaluate(&x);
-            // this is the deep formula, we expect the degree of the DEEP polynomial to be one less than the constraint polynomial
-            let d_x = alpha * (q_x - q_z) / (x - z);
+            let d_x = (q_x - q_z) / (x - z);
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
-
-            // we can get away with not using the extended domain for spot checks only if we do the following:
-            // during interpolation of c(x) / when committing in practice, we also evaluate the constraints at c(z)
-
-            // one of many spot checks for DEEP consistency -> this will happen in the verifier together with trace merkle openings
-            assert_eq!(
-                d_x,
-                alpha * (q_poly.evaluate(&x) - q_poly.evaluate(&z)) / (x - z)
-            );
         }
 
         // we fold the polynomial using our FRI evaluation domain
