@@ -94,12 +94,6 @@ impl StarkProver {
             })
             .collect();
 
-        let c_z_commitment = fibonacci_constraint(
-            trace_poly.evaluate(g * g * z),
-            trace_poly.evaluate(g * z),
-            trace_poly.evaluate(z),
-        );
-
         let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
             &domain.ifft(&c_evals),
         ));
@@ -115,11 +109,20 @@ impl StarkProver {
         let mut test_spot_check: Vec<Fr> = Vec::new();
 
         let q_z = q_poly.evaluate(&z);
+        let t_z = trace_poly.evaluate(z);
+        let t_gz = trace_poly.evaluate(g * z);
+        let t_ggz = trace_poly.evaluate(g * g * z);
         let mut d_evals = vec![];
         // evaluate DEEP polynomial
         for x in shifted_domain.elements() {
             let q_x = q_poly.evaluate(&x);
-            let d_x = (q_x - q_z) / (x - z);
+            let t_x = trace_poly.evaluate(x);
+            let t_gx = trace_poly.evaluate(g * x);
+            let t_ggx = trace_poly.evaluate(g * g * x);
+            let d_x = (q_x - q_z) / (x - z)
+                + (t_ggx - t_ggz) / (x - z)
+                + (t_gx - t_gz) / (x - z)
+                + (t_x - t_z) / (x - z);
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
         }
