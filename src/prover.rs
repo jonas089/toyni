@@ -54,7 +54,7 @@ impl StarkProver {
         let trace_len = self.trace.trace.len() as usize;
         let domain = GeneralEvaluationDomain::<Fr>::new(trace_len).unwrap();
         // the extended domain that overlaps the original roots of unity domain
-        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 2).unwrap();
+        let extended_domain = GeneralEvaluationDomain::<Fr>::new(trace_len * 8).unwrap();
         let shifted_domain = extended_domain.get_coset(Fr::from(7)).unwrap();
 
         // the vanishing polynomial for our trace over the original domain
@@ -81,9 +81,9 @@ impl StarkProver {
 
         let g = domain.group_gen();
 
-        let z = get_random_z(&extended_domain);
+        let z = get_random_z(&extended_domain, &shifted_domain);
 
-        let c_evals: Vec<Fr> = extended_domain
+        let c_evals: Vec<Fr> = domain
             .elements()
             .map(|x| {
                 fibonacci_constraint(
@@ -94,12 +94,14 @@ impl StarkProver {
             })
             .collect();
 
-        let c_poly = DensePolynomial::from_coefficients_slice(&extended_domain.ifft(&c_evals));
+        let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
+            &domain.ifft(&c_evals),
+        ));
 
         // evaluations of the quotient polynomial at challenge points
         let mut q_evals: Vec<Fr> = Vec::new();
         for x in shifted_domain.elements() {
-            q_evals.push(c_poly.evaluate(&x) / z_poly.evaluate(x));
+            q_evals.push(c_poly.evaluate(x) / z_poly.evaluate(x));
         }
 
         // interpolation of the quotient for development purposes
@@ -179,16 +181,21 @@ impl StarkProver {
     }
 }
 
-fn get_random_z(domain: &GeneralEvaluationDomain<Fr>) -> Fr {
+fn get_random_z(
+    extended_domain: &GeneralEvaluationDomain<Fr>,
+    shifted_domain: &GeneralEvaluationDomain<Fr>,
+) -> Fr {
     let mut rng = thread_rng();
-    let domain_set: std::collections::HashSet<Fr> = domain.elements().collect();
-    let g = domain.group_gen();
+    let ext_set: std::collections::HashSet<Fr> = extended_domain.elements().collect();
+    let shift_set: std::collections::HashSet<Fr> = shifted_domain.elements().collect();
+    let g = extended_domain.group_gen();
 
     loop {
         let z = Fr::rand(&mut rng);
-        if !domain_set.contains(&z)
-            && !domain_set.contains(&(g * z))
-            && !domain_set.contains(&(g * g * z))
+        if !ext_set.contains(&z)
+            && !shift_set.contains(&z)
+            && !shift_set.contains(&(g * z))
+            && !shift_set.contains(&(g * g * z))
         {
             return z;
         }
