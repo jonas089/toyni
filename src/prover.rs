@@ -13,13 +13,9 @@ fn random_poly(degree: usize) -> ToyniPolynomial {
     ToyniPolynomial::new(coeffs)
 }
 
-pub const CONSTRAINT_SPOT_CHECKS: usize = 50;
-
 #[derive(Debug)]
 pub struct StarkProof {
     pub fri_challenges: Vec<Fr>,
-    pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
-    pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
 }
 
 pub struct StarkProver {
@@ -159,14 +155,7 @@ impl StarkProver {
         println!("Folding steps: {}", &folding_steps);
 
         assert_eq!(folding_steps, 5);
-        let mut trace_spot_checks = [[Fr::ZERO; 3]; CONSTRAINT_SPOT_CHECKS];
-        let mut constraint_spot_checks = [Fr::ZERO; CONSTRAINT_SPOT_CHECKS];
-
-        StarkProof {
-            fri_challenges,
-            trace_spot_checks,
-            constraint_spot_checks,
-        }
+        StarkProof { fri_challenges }
     }
 }
 
