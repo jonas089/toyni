@@ -2,7 +2,7 @@ use crate::math::fri::fri_fold;
 use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
+use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use rand::thread_rng;
 
@@ -138,7 +138,7 @@ impl StarkProver {
             beta_bytes.copy_from_slice(&fri_hash[..32]);
             let beta = Fr::from_le_bytes_mod_order(&beta_bytes);
             d_evals = fri_fold(&d_evals, &xs, beta);
-            xs.truncate(d_evals.len()); // keep only the first half
+            xs.truncate(d_evals.len());
             for x in &mut xs {
                 *x = *x * *x;
             }
