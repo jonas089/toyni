@@ -114,6 +114,7 @@ impl StarkProver {
         let t_gz = trace_poly.evaluate(g * z);
         let t_ggz = trace_poly.evaluate(g * g * z);
         let mut d_evals = vec![];
+
         // evaluate DEEP polynomial
         for x in shifted_domain.elements() {
             let q_x = q_poly.evaluate(&x);
@@ -127,6 +128,17 @@ impl StarkProver {
             test_spot_check.push(d_x.clone());
             d_evals.push(d_x);
         }
+
+        // simulate consistency check at z
+        assert_eq!(
+            fibonacci_constraint(
+                trace_poly.evaluate(g * g * z),
+                trace_poly.evaluate(g * z),
+                trace_poly.evaluate(z),
+            ) * boundary_constraint_1(z, g, trace_len)
+                * boundary_constraint_2(z, g, trace_len),
+            q_poly.evaluate(&z) * z_poly.evaluate(z)
+        );
 
         // we fold the polynomial using our FRI evaluation domain
         // the spot checks will later ensure that the polynomial was folded correctly
