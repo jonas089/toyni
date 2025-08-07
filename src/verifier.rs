@@ -1,10 +1,6 @@
-use crate::{
-    math::polynomial::Polynomial,
-    prover::{CONSTRAINT_SPOT_CHECKS, StarkProof},
-};
+use crate::prover::StarkProof;
 use ark_bls12_381::Fr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
-use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use ark_ff::{BigInteger, Field, PrimeField};
 
 pub struct StarkVerifier {
     trace_len: usize,

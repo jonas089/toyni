@@ -1,6 +1,5 @@
 use ark_bls12_381::Fr;
 use ark_ff::Field;
-use ark_poly::{EvaluationDomain, Evaluations, GeneralEvaluationDomain, Polynomial as ArkPoly};
 
 use crate::math::polynomial::Polynomial;
 pub type ProgramVariable = String;
