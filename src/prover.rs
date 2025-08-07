@@ -81,19 +81,6 @@ impl StarkProver {
 
         let g = domain.group_gen();
 
-        let elements: Vec<Fr> = domain
-            .elements()
-            .map(|x| {
-                fibonacci_constraint(
-                    trace_poly.evaluate(g * g * x),
-                    trace_poly.evaluate(g * x),
-                    trace_poly.evaluate(x),
-                )
-            })
-            .collect();
-
-        println!("Elements: {:?}", &elements);
-
         let z = get_random_z(&extended_domain, &shifted_domain);
 
         let c_evals: Vec<Fr> = shifted_domain
@@ -176,6 +163,7 @@ impl StarkProver {
             folding_steps += 1;
         }
 
+        println!("Constraint degree: {}", &c_poly.degree());
         println!("Quotient degree: {}", &q_poly.degree());
         println!("DEEP degree: {}", &d_poly_degree);
         println!("Folding steps: {}", &folding_steps);
