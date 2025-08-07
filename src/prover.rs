@@ -22,24 +22,6 @@ pub struct StarkProof {
     pub trace_spot_checks: [[Fr; 3]; CONSTRAINT_SPOT_CHECKS],
     pub constraint_spot_checks: [Fr; CONSTRAINT_SPOT_CHECKS],
 }
-/* Real implementation plan
-
-1. interpolate T(x) over original domain
-2. commit to Q(x) over shifted domain
-3. fold D(x) and check some shifted spots for equality against Q(x)
-4. check C(z) for consistency e.g. Q(z) = fibonacci(z) / Z(z)
-
-Q(z) = fibonacci(ggz, gz, z) / Z(z)
-
-we use Q(z) to build D and then fold D, committing to each layer.
-
-The verifier checks that Q(z) = fibonacci(ggz, gz, z) / Z(z) + trace commitments
-and that D(x) is low degree / consistent commitments for FRI, as well as some
-spot checks in the extended shifted domain revealing:
-
-alpha * (Q(x) - Q(z)) / (x - z)
-where Q(z), z are constant
-*/
 
 pub struct StarkProver {
     trace: ExecutionTrace,

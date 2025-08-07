@@ -3,6 +3,10 @@
 > Toyni was migrated from [jonas089's Github](https://github.com/jonas089/Toyni)
 > Click [here](https://github.com/jonas089/Toyni) to see the past commit history.
 
+## Learning
+This implementation goes hand-in-hand with my article on STARKs that you can read [here](https://github.com/jonas089/articles/blob/master/02-starks.md).
+Toyni relies on prime fields and DEEP-ALI for soundness. I am looking forward to exploring binary field STARKs later in my career.
+
 ![toyniii](art/toyniii.jpg)
 
 *Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)*
