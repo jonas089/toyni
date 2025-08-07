@@ -3,8 +3,7 @@ use crate::math::polynomial::Polynomial as ToyniPolynomial;
 use crate::{digest_sha2, program::trace::ExecutionTrace};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField, UniformRand};
-use ark_poly::univariate::DensePolynomial;
-use ark_poly::{DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use rand::thread_rng;
 
 #[allow(dead_code)]
@@ -77,9 +76,7 @@ impl StarkProver {
             })
             .collect();
 
-        let c_poly = ToyniPolynomial::from_dense_poly(DensePolynomial::from_coefficients_slice(
-            &shifted_domain.ifft(&c_evals),
-        ));
+        let c_poly = ToyniPolynomial::new(shifted_domain.ifft(&c_evals));
 
         // evaluations of the quotient polynomial at challenge points
         let mut q_evals: Vec<Fr> = Vec::new();
@@ -88,10 +85,10 @@ impl StarkProver {
         }
 
         // interpolation of the quotient for development purposes
-        let q_poly = DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&q_evals));
+        let q_poly = ToyniPolynomial::new(shifted_domain.ifft(&q_evals));
         let mut test_spot_check: Vec<Fr> = Vec::new();
 
-        let q_z = q_poly.evaluate(&z);
+        let q_z = q_poly.evaluate(z);
         let t_z = trace_poly.evaluate(z);
         let t_gz = trace_poly.evaluate(g * z);
         let t_ggz = trace_poly.evaluate(g * g * z);
@@ -99,7 +96,7 @@ impl StarkProver {
 
         // evaluate DEEP polynomial
         for x in shifted_domain.elements() {
-            let q_x = q_poly.evaluate(&x);
+            let q_x = q_poly.evaluate(x);
             let t_x = trace_poly.evaluate(x);
             let t_gx = trace_poly.evaluate(g * x);
             let t_ggx = trace_poly.evaluate(g * g * x);
@@ -119,7 +116,7 @@ impl StarkProver {
                 trace_poly.evaluate(z),
             ) * boundary_constraint_1(z, g, trace_len)
                 * boundary_constraint_2(z, g, trace_len),
-            q_poly.evaluate(&z) * z_poly.evaluate(z)
+            q_poly.evaluate(z) * z_poly.evaluate(z)
         );
 
         // we fold the polynomial using our FRI evaluation domain
@@ -130,8 +127,7 @@ impl StarkProver {
         let mut folding_steps: usize = 0;
 
         // note the degree of the deep polynomial for debugging
-        let d_poly_degree: usize =
-            DensePolynomial::from_coefficients_slice(&shifted_domain.ifft(&d_evals)).degree();
+        let d_poly_degree: usize = ToyniPolynomial::new(shifted_domain.ifft(&d_evals)).degree();
 
         let mut xs: Vec<Fr> = shifted_domain.elements().collect();
 
