@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MerkleProof {
     pub path: Vec<Vec<u8>>,
     pub position: Vec<bool>,

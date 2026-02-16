@@ -1,12 +1,11 @@
-use ark_bls12_381::Fr;
-use ark_ff::Field;
-
+use crate::babybear::BabyBear;
 use crate::math::polynomial::Polynomial;
+
 pub type ProgramVariable = String;
 
 #[derive(Clone)]
 pub struct ExecutionTrace {
-    pub trace: Vec<Vec<Fr>>,
+    pub trace: Vec<Vec<BabyBear>>,
 }
 
 impl ExecutionTrace {
@@ -15,7 +14,7 @@ impl ExecutionTrace {
     }
 
     /// Treats input as a column: inserts variable values over time.
-    pub fn insert_column(&mut self, column: Vec<Fr>) {
+    pub fn insert_column(&mut self, column: Vec<BabyBear>) {
         if self.trace.is_empty() {
             self.trace = column.into_iter().map(|val| vec![val]).collect();
         } else {
@@ -26,7 +25,7 @@ impl ExecutionTrace {
         }
     }
 
-    pub fn interpolate_column(&self, domain: &[Fr], column_idx: usize) -> Polynomial {
+    pub fn interpolate_column(&self, domain: &[BabyBear], column_idx: usize) -> Polynomial {
         assert_eq!(
             domain.len(),
             self.trace.len(),
@@ -34,22 +33,22 @@ impl ExecutionTrace {
         );
 
         let xs = domain.to_vec();
-        let ys: Vec<Fr> = self.trace.iter().map(|row| row[column_idx]).collect();
+        let ys: Vec<BabyBear> = self.trace.iter().map(|row| row[column_idx]).collect();
 
         let mut poly = Polynomial::zero();
 
         for (i, (xi, yi)) in xs.iter().zip(ys.iter()).enumerate() {
-            let mut numerator = Polynomial::new(vec![Fr::ONE]);
-            let mut denominator = Fr::ONE;
+            let mut numerator = Polynomial::new(vec![BabyBear::one()]);
+            let mut denominator = BabyBear::one();
 
             for (j, xj) in xs.iter().enumerate() {
                 if i != j {
-                    numerator = numerator.mul(&Polynomial::new(vec![-*xj, Fr::ONE])); // (x - xj)
-                    denominator *= *xi - *xj;
+                    numerator = numerator.mul(&Polynomial::new(vec![-*xj, BabyBear::one()]));
+                    denominator = denominator * (*xi - *xj);
                 }
             }
 
-            let li = numerator.scale(denominator.inverse().unwrap());
+            let li = numerator.scale(denominator.inverse());
             poly = poly.add(&li.scale(*yi));
         }
 

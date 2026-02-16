@@ -1,19 +1,16 @@
-//! Basic polynomial operations over finite fields.
+//! Basic polynomial operations over BabyBear field.
 
-use ark_bls12_381::Fr;
-use ark_ff::{Field, UniformRand, Zero};
-use ark_poly::univariate::DensePolynomial;
-use rand;
+use crate::babybear::BabyBear;
 use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct Polynomial {
-    pub coefficients: Vec<Fr>,
+    pub coefficients: Vec<BabyBear>,
 }
 
 impl Polynomial {
-    pub fn new(mut coefficients: Vec<Fr>) -> Self {
-        while coefficients.last().is_some_and(|&x| x.is_zero()) {
+    pub fn new(mut coefficients: Vec<BabyBear>) -> Self {
+        while coefficients.last().is_some_and(|x| x.is_zero()) {
             coefficients.pop();
         }
         Self { coefficients }
@@ -27,8 +24,11 @@ impl Polynomial {
         }
     }
 
-    pub fn leading_coefficient(&self) -> Fr {
-        self.coefficients.last().copied().unwrap_or(Fr::zero())
+    pub fn leading_coefficient(&self) -> BabyBear {
+        self.coefficients
+            .last()
+            .copied()
+            .unwrap_or(BabyBear::zero())
     }
 
     pub fn divide(&self, divisor: &Polynomial) -> Option<(Polynomial, Polynomial)> {
@@ -40,15 +40,13 @@ impl Polynomial {
         let divisor_degree = divisor.degree();
         let dividend_degree = self.degree();
 
-        // If dividend degree is less than divisor degree, quotient is zero
         if dividend_degree < divisor_degree {
             return Some((Polynomial::zero(), self.clone()));
         }
 
-        let mut quotient = vec![Fr::zero(); dividend_degree - divisor_degree + 1];
+        let mut quotient = vec![BabyBear::zero(); dividend_degree - divisor_degree + 1];
         let mut remainder = dividend.clone();
 
-        // Perform long division
         for i in (0..=dividend_degree - divisor_degree).rev() {
             let leading_coeff = remainder[i + divisor_degree];
             if leading_coeff.is_zero() {
@@ -57,13 +55,11 @@ impl Polynomial {
 
             quotient[i] = leading_coeff / divisor.leading_coefficient();
 
-            // Subtract divisor * quotient term from remainder
             for j in 0..=divisor_degree {
-                remainder[i + j] -= quotient[i] * divisor.coefficients[j];
+                remainder[i + j] = remainder[i + j] - quotient[i] * divisor.coefficients[j];
             }
         }
 
-        // Trim leading zeros from remainder
         while !remainder.is_empty() && remainder.last().unwrap().is_zero() {
             remainder.pop();
         }
@@ -71,13 +67,11 @@ impl Polynomial {
         Some((Polynomial::new(quotient), Polynomial::new(remainder)))
     }
 
-    pub fn divide_by_linear(&self, z: Fr) -> (Polynomial, Fr) {
-        // Performs (self - self(z)) / (x - z)
-        // Equivalent to synthetic division by (x - z)
-        let mut quotient = vec![Fr::zero(); self.coefficients.len().saturating_sub(1)];
-        let mut remainder = Fr::zero();
+    pub fn divide_by_linear(&self, z: BabyBear) -> (Polynomial, BabyBear) {
+        let mut quotient = vec![BabyBear::zero(); self.coefficients.len().saturating_sub(1)];
+        let mut remainder = BabyBear::zero();
 
-        let mut acc = Fr::zero();
+        let mut acc = BabyBear::zero();
         for (i, &coeff) in self.coefficients.iter().rev().enumerate() {
             if i == 0 {
                 remainder = acc;
@@ -93,14 +87,14 @@ impl Polynomial {
 
     pub fn add(&self, other: &Polynomial) -> Polynomial {
         let max_len = std::cmp::max(self.coefficients.len(), other.coefficients.len());
-        let mut result = vec![Fr::zero(); max_len];
+        let mut result = vec![BabyBear::zero(); max_len];
 
         for (i, coeff) in result.iter_mut().enumerate().take(self.coefficients.len()) {
-            *coeff += self.coefficients[i];
+            *coeff = *coeff + self.coefficients[i];
         }
 
         for (i, coeff) in result.iter_mut().enumerate().take(other.coefficients.len()) {
-            *coeff += other.coefficients[i];
+            *coeff = *coeff + other.coefficients[i];
         }
 
         Polynomial::new(result)
@@ -108,14 +102,14 @@ impl Polynomial {
 
     pub fn sub(&self, other: &Polynomial) -> Polynomial {
         let max_len = std::cmp::max(self.coefficients.len(), other.coefficients.len());
-        let mut result = vec![Fr::zero(); max_len];
+        let mut result = vec![BabyBear::zero(); max_len];
 
         for i in 0..self.coefficients.len() {
             result[i] = self.coefficients[i];
         }
 
         for i in 0..other.coefficients.len() {
-            result[i] -= other.coefficients[i];
+            result[i] = result[i] - other.coefficients[i];
         }
 
         Polynomial::new(result)
@@ -126,20 +120,20 @@ impl Polynomial {
             return Polynomial::new(vec![]);
         }
 
-        let mut result = vec![Fr::zero(); self.degree() + other.degree() + 1];
+        let mut result = vec![BabyBear::zero(); self.degree() + other.degree() + 1];
 
         for i in 0..self.coefficients.len() {
             for j in 0..other.coefficients.len() {
-                result[i + j] += self.coefficients[i] * other.coefficients[j];
+                result[i + j] = result[i + j] + self.coefficients[i] * other.coefficients[j];
             }
         }
 
         Polynomial::new(result)
     }
 
-    pub fn evaluate(&self, x: Fr) -> Fr {
+    pub fn evaluate(&self, x: BabyBear) -> BabyBear {
         if self.coefficients.is_empty() {
-            return Fr::zero();
+            return BabyBear::zero();
         }
 
         let mut result = self.coefficients[self.coefficients.len() - 1];
@@ -149,59 +143,43 @@ impl Polynomial {
         result
     }
 
-    pub fn evaluate_at_u64(&self, x: u64) -> Fr {
-        self.evaluate(Fr::from(x))
-    }
-
-    pub fn from_dense_poly(poly: DensePolynomial<Fr>) -> Self {
-        Self::new(poly.coeffs)
-    }
-
     pub fn is_zero(&self) -> bool {
         self.coefficients.iter().all(|c| c.is_zero())
     }
 
     pub fn zero() -> Self {
-        Self::new(vec![Fr::zero()])
-    }
-
-    pub fn random(degree: usize, rng: &mut impl rand::Rng) -> Self {
-        let mut coefficients = Vec::with_capacity(degree + 1);
-        for _ in 0..=degree {
-            coefficients.push(Fr::rand(rng));
-        }
-        Self::new(coefficients)
+        Self::new(vec![BabyBear::zero()])
     }
 
     pub fn mul(&self, other: &Self) -> Self {
         self.multiply(other)
     }
 
-    pub fn coefficients(&self) -> &[Fr] {
+    pub fn coefficients(&self) -> &[BabyBear] {
         &self.coefficients
     }
 
-    pub fn scale(&self, scalar: Fr) -> Self {
-        let scaled_coeffs: Vec<Fr> = self.coefficients.iter().map(|c| *c * scalar).collect();
+    pub fn scale(&self, scalar: BabyBear) -> Self {
+        let scaled_coeffs: Vec<BabyBear> = self.coefficients.iter().map(|c| *c * scalar).collect();
         Polynomial::new(scaled_coeffs)
     }
 
-    pub fn lagrange_interpolate(xs: &[Fr], ys: &[Fr]) -> Self {
+    pub fn lagrange_interpolate(xs: &[BabyBear], ys: &[BabyBear]) -> Self {
         assert_eq!(xs.len(), ys.len(), "Mismatched input lengths");
         let n = xs.len();
         let mut result = Polynomial::zero();
 
         for i in 0..n {
-            let mut basis = Polynomial::new(vec![Fr::ONE]);
-            let mut denom = Fr::ONE;
+            let mut basis = Polynomial::new(vec![BabyBear::one()]);
+            let mut denom = BabyBear::one();
 
             for j in 0..n {
                 if i == j {
                     continue;
                 }
-                let factor = Polynomial::new(vec![-xs[j], Fr::ONE]);
+                let factor = Polynomial::new(vec![-xs[j], BabyBear::one()]);
                 basis = basis.mul(&factor);
-                denom *= xs[i] - xs[j];
+                denom = denom * (xs[i] - xs[j]);
             }
 
             let coeff = ys[i] / denom;

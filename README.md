@@ -37,18 +37,6 @@ The `Fibonacci` program defines a single-column trace table of shape:
 cargo test test_fibonacci -- --nocapture
 ```
 
-Output:
-
-```bash
-running 1 test
-expected: 0, actual: 0
-expected: 0, actual: 0
-expected: 0, actual: 0
-expected: 0, actual: 0
-expected: 0, actual: 0
-test prover::tests::test_fibonacci ... ok
-```
-
 Here the expected evaluation is ∑ci(x). For the fibonacci program we only have one constraint defined as:
 
 ```rust
