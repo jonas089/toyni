@@ -9,6 +9,21 @@ fn has_nvcc() -> bool {
         .is_ok()
 }
 
+/// Returns true if the installed nvcc lists `arch` (e.g. "compute_120") in
+/// its supported arch list. Used to gate Blackwell (RTX 5090) codegen on
+/// toolkits old enough to predate sm_120.
+fn nvcc_supports_arch(arch: &str) -> bool {
+    let out = match Command::new("nvcc").arg("--list-gpu-arch").output() {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    s.lines().any(|l| l.trim() == arch)
+}
+
 fn main() {
     let want_cuda = env::var("CARGO_FEATURE_CUDA").is_ok();
 
@@ -30,11 +45,19 @@ fn main() {
     let cuda_obj = out_dir.join("ntt_kernel.o");
     let cuda_lib = out_dir.join("libntt_cuda.a");
 
-    let compute_caps = [
+    let mut compute_caps: Vec<&str> = vec![
         "compute_75", // RTX 20xx
         "compute_86", // RTX 30xx
-        "compute_89", // RTX 40xx / 50xx
+        "compute_89", // RTX 40xx (Ada)
     ];
+
+    // RTX 50xx (Blackwell, sm_120) — only emit native code when the toolkit
+    // supports it. Otherwise the 5090 falls back to JIT-compiling the
+    // forward-compat PTX below, which still works but pays a one-time cost.
+    let blackwell = nvcc_supports_arch("compute_120");
+    if blackwell {
+        compute_caps.push("compute_120");
+    }
 
     let mut gencode = Vec::new();
     for cc in &compute_caps {
@@ -43,8 +66,11 @@ fn main() {
         gencode.push(format!("arch={},code={}", cc, sm));
     }
 
+    // Forward-compat PTX of the highest available arch so even newer GPUs
+    // can JIT it.
+    let highest_ptx = if blackwell { "compute_120" } else { "compute_89" };
     gencode.push("-gencode".into());
-    gencode.push("arch=compute_89,code=compute_89".into());
+    gencode.push(format!("arch={0},code={0}", highest_ptx));
 
     let status = Command::new("nvcc")
         .arg("-c")

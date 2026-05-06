@@ -1,14 +1,12 @@
 use sha2::{Digest, Sha256};
 
 pub mod babybear;
-pub mod ntt_babybear;
-#[cfg(feature = "cuda")]
-pub mod cuda_ntt;
+pub mod ntt;
 
+pub mod fibonacci;
 pub mod math;
 pub mod merkle;
 pub mod program;
-pub mod prover;
 pub mod transcript;
 pub mod verifier;
 

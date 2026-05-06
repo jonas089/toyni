@@ -8,6 +8,11 @@
 // BabyBear prime: 2^31 - 2^27 + 1
 #define BABYBEAR_PRIME 2013265921ULL
 
+// Barrett reduction constant: floor(2^64 / BABYBEAR_PRIME) = 9162596893.
+// Used to reduce a 62-bit product (a*b with a,b < p < 2^31) to [0, 2p) in
+// a few cheap ops instead of a 64-bit modulo.
+#define BABYBEAR_BARRETT_MU 9162596893ULL
+
 // BabyBear field element
 typedef uint64_t BabyBearElem;
 
@@ -36,20 +41,22 @@ __device__ __host__ __forceinline__ uint64_t bb_sub(uint64_t a, uint64_t b) {
 }
 
 __device__ __host__ __forceinline__ uint64_t bb_mul(uint64_t a, uint64_t b) {
-    // Use 128-bit intermediate to avoid overflow
+    // Inputs are assumed to be in [0, p), so a*b < p^2 < 2^62 fits in uint64_t.
+    // Barrett reduction: q ~ floor(prod / p) computed via the high half of
+    // prod * MU; one conditional subtract folds [0, 2p) into [0, p).
+    uint64_t prod = a * b;
+
+    uint64_t q;
 #ifdef __CUDA_ARCH__
-    // Device code: use CUDA intrinsic
-    unsigned long long product_hi, product_lo;
-    product_lo = a * b;
-    product_hi = __umul64hi(a, b);
-    uint64_t result = product_lo % BABYBEAR_PRIME;
-    return result;
+    q = __umul64hi(prod, BABYBEAR_BARRETT_MU);
 #else
-    // Host code: use standard C++
-    __uint128_t product = (__uint128_t)a * (__uint128_t)b;
-    uint64_t result = product % BABYBEAR_PRIME;
-    return result;
+    __uint128_t wide = (__uint128_t)prod * (__uint128_t)BABYBEAR_BARRETT_MU;
+    q = (uint64_t)(wide >> 64);
 #endif
+
+    uint64_t r = prod - q * BABYBEAR_PRIME;
+    if (r >= BABYBEAR_PRIME) r -= BABYBEAR_PRIME;
+    return r;
 }
 
 // Modular exponentiation on device and host
@@ -713,4 +720,103 @@ void cuda_rs_encode_vertical(
     // Single synchronization at the end
     cudaDeviceSynchronize();
 }
+
+// ============================================================================
+// PERSISTENT NTT CONTEXT
+// ----------------------------------------------------------------------------
+// One context per (n) caches: forward twiddles, inverse twiddles, n^-1 mod p,
+// and a reusable device data buffer. Eliminates per-call cudaMalloc/cudaFree,
+// per-stage host twiddle compute + H2D copies, and per-stage cudaSync.
+// ============================================================================
+
+struct NttCtx {
+    NTTTwiddles* fwd;
+    NTTTwiddles* inv;
+    uint64_t* d_data;
+    uint64_t inv_n_val;
+    uint32_t n;
+    uint32_t log_n;
+};
+
+NttCtx* ntt_ctx_create(uint32_t n) {
+    uint32_t log_n = 0;
+    uint32_t t = n;
+    while (t > 1) { log_n++; t >>= 1; }
+
+    // BabyBear primitive 2^27-th root of unity is 440564289.
+    // omega for size n = root_27^(2^(27 - log_n)).
+    uint64_t omega = bb_pow(440564289ULL, 1ULL << (27 - log_n));
+    uint64_t inv_omega = bb_pow(omega, (uint64_t)n - 1);
+    uint64_t inv_n = bb_pow((uint64_t)n, BABYBEAR_PRIME - 2);
+
+    NttCtx* ctx = new NttCtx();
+    ctx->n = n;
+    ctx->log_n = log_n;
+    ctx->inv_n_val = inv_n;
+    ctx->fwd = ntt_twiddles_create(n, omega);
+    ctx->inv = ntt_twiddles_create(n, inv_omega);
+    cudaMalloc((void**)&ctx->d_data, (size_t)n * sizeof(uint64_t));
+    return ctx;
+}
+
+void ntt_ctx_destroy(NttCtx* ctx) {
+    if (!ctx) return;
+    ntt_twiddles_destroy(ctx->fwd);
+    ntt_twiddles_destroy(ctx->inv);
+    cudaFree(ctx->d_data);
+    delete ctx;
+}
+
+// Forward NTT in place on host data using cached device twiddles.
+// One H2D, all kernels back-to-back on the default stream (no per-stage
+// sync — kernels on the same stream are serialized by the driver), one D2H.
+void ntt_run_inplace(NttCtx* ctx, uint64_t* h_data) {
+    uint32_t n = ctx->n;
+    uint32_t log_n = ctx->log_n;
+    uint32_t threads = 256;
+
+    cudaMemcpy(ctx->d_data, h_data, (size_t)n * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    uint32_t blocks_n = (n + threads - 1) / threads;
+    ntt_kernel_bit_reverse<<<blocks_n, threads>>>(ctx->d_data, n, log_n);
+
+    uint32_t total_butterflies = n / 2;
+    uint32_t blocks_b = (total_butterflies + threads - 1) / threads;
+    for (uint32_t stage = 1; stage <= log_n; stage++) {
+        // Twiddle layout in NTTTwiddles::d_data is [stage1: 1][stage2: 2]...
+        // so the offset for stage s is sum_{i=1}^{s-1} 2^(i-1) = 2^(s-1) - 1.
+        uint32_t off = (1u << (stage - 1)) - 1;
+        uint64_t* stage_tw = ctx->fwd->d_data + off;
+        ntt_kernel_butterfly<<<blocks_b, threads>>>(ctx->d_data, n, stage, stage_tw);
+    }
+
+    // cudaMemcpy on the default stream is synchronous w.r.t. preceding kernels,
+    // so no explicit cudaDeviceSynchronize is needed.
+    cudaMemcpy(h_data, ctx->d_data, (size_t)n * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+}
+
+void intt_run_inplace(NttCtx* ctx, uint64_t* h_data) {
+    uint32_t n = ctx->n;
+    uint32_t log_n = ctx->log_n;
+    uint32_t threads = 256;
+
+    cudaMemcpy(ctx->d_data, h_data, (size_t)n * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    uint32_t blocks_n = (n + threads - 1) / threads;
+    ntt_kernel_bit_reverse<<<blocks_n, threads>>>(ctx->d_data, n, log_n);
+
+    uint32_t total_butterflies = n / 2;
+    uint32_t blocks_b = (total_butterflies + threads - 1) / threads;
+    for (uint32_t stage = 1; stage <= log_n; stage++) {
+        uint32_t off = (1u << (stage - 1)) - 1;
+        uint64_t* stage_tw = ctx->inv->d_data + off;
+        ntt_kernel_butterfly<<<blocks_b, threads>>>(ctx->d_data, n, stage, stage_tw);
+    }
+
+    // Scale runs on the same stream — implicitly waits for the last butterfly.
+    scale_by_inv_n<<<blocks_n, threads>>>(ctx->d_data, n, ctx->inv_n_val);
+
+    cudaMemcpy(h_data, ctx->d_data, (size_t)n * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+}
+
 } // extern "C"

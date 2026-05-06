@@ -2,7 +2,7 @@ use crate::babybear::BabyBear;
 use crate::math::domain::BabyBearDomain;
 use crate::math::polynomial::Polynomial;
 use crate::merkle::verify_merkle_proof;
-use crate::prover::{
+use crate::fibonacci::{
     eval_boundary_1, eval_boundary_2, eval_fibonacci_constraint, MerkleOpening, StarkProof,
     BLOWUP, COSET_SHIFT, NUM_QUERIES,
 };
@@ -233,7 +233,7 @@ fn derive_z_verifier(
 mod tests {
     use super::*;
     use crate::program::trace::ExecutionTrace;
-    use crate::prover::StarkProver;
+    use crate::fibonacci::StarkProver;
 
     fn fibonacci_list(n: usize) -> Vec<u64> {
         let mut fibs = Vec::with_capacity(n);
