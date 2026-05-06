@@ -45,6 +45,43 @@ unsafe extern "C" {
         omega_k: u64,
         omega_kn: u64,
     );
+
+    // Persistent NTT context: caches twiddles + reusable device buffer per n.
+    fn ntt_ctx_create(n: u32) -> *mut std::ffi::c_void;
+    fn ntt_ctx_destroy(ctx: *mut std::ffi::c_void);
+    fn ntt_run_inplace(ctx: *mut std::ffi::c_void, h_data: *mut u64);
+    fn intt_run_inplace(ctx: *mut std::ffi::c_void, h_data: *mut u64);
+}
+
+// Compile-time guarantee: BabyBear has the same memory layout as u64 so we
+// can hand a `&mut [BabyBear]` straight to the C side as a `*mut u64` without
+// allocating an intermediate Vec.
+const _: () = assert!(std::mem::size_of::<BabyBear>() == std::mem::size_of::<u64>());
+const _: () = assert!(std::mem::align_of::<BabyBear>() == std::mem::align_of::<u64>());
+
+// Wrapper to give a raw NttCtx pointer Send/Sync. The pointer points at
+// device-managed state that the C side serialises internally; calls into it
+// from the prover are single-threaded today, but the cache itself is shared.
+struct CtxPtr(*mut std::ffi::c_void);
+unsafe impl Send for CtxPtr {}
+unsafe impl Sync for CtxPtr {}
+
+/// Look up (or lazily create) the cached NTT context for a given size.
+/// Subsequent calls for the same `n` skip device allocation, host twiddle
+/// computation, and per-stage H2D copies entirely.
+fn get_or_create_ctx(n: usize) -> *mut std::ffi::c_void {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<usize, CtxPtr>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap();
+    if let Some(p) = guard.get(&n) {
+        return p.0;
+    }
+    let ptr = unsafe { ntt_ctx_create(n as u32) };
+    guard.insert(n, CtxPtr(ptr));
+    ptr
 }
 
 /// Check if CUDA is available
@@ -121,61 +158,39 @@ impl Drop for CudaBuffer {
 unsafe impl Send for CudaBuffer {}
 unsafe impl Sync for CudaBuffer {}
 
-/// Perform NTT on GPU
+/// Perform NTT on GPU.
+///
+/// Reinterprets `&mut [BabyBear]` as `*mut u64` (safe because BabyBear is
+/// `#[repr(C)] { value: u64 }`, statically asserted above) and hands it to a
+/// cached NTT context. That context owns: a reusable device buffer, forward
+/// twiddles, inverse twiddles, and n^-1 mod p — all reused across every call
+/// for a given size, so per-call overhead is one H2D + kernels + one D2H.
 pub fn ntt_cuda(values: &mut [BabyBear]) -> Result<(), String> {
     if !cuda_available() {
         return Err("CUDA not available".to_string());
     }
-
     let n = values.len();
     assert!(n.is_power_of_two(), "NTT size must be power of 2");
+    assert!(n.trailing_zeros() <= 27, "BabyBear only supports NTT up to 2^27");
 
-    let omega = BabyBear::get_root_of_unity(n.trailing_zeros());
-
-    let mut raw_values: Vec<u64> = values.iter().map(|v| v.value).collect();
-
-    let mut d_buffer = CudaBuffer::new(n)?;
-    d_buffer.copy_from_host(&raw_values)?;
-
-    unsafe {
-        cuda_ntt(d_buffer.as_ptr(), n as u32, omega.value);
-    }
-
-    d_buffer.copy_to_host(&mut raw_values)?;
-
-    for (i, val) in raw_values.iter().enumerate() {
-        values[i] = BabyBear::new(*val);
-    }
-
+    let ctx = get_or_create_ctx(n);
+    let raw = values.as_mut_ptr() as *mut u64;
+    unsafe { ntt_run_inplace(ctx, raw); }
     Ok(())
 }
 
-/// Perform inverse NTT on GPU
+/// Perform inverse NTT on GPU. See [`ntt_cuda`] for the caching model.
 pub fn intt_cuda(values: &mut [BabyBear]) -> Result<(), String> {
     if !cuda_available() {
         return Err("CUDA not available".to_string());
     }
-
     let n = values.len();
     assert!(n.is_power_of_two(), "NTT size must be power of 2");
+    assert!(n.trailing_zeros() <= 27, "BabyBear only supports NTT up to 2^27");
 
-    let omega = BabyBear::get_root_of_unity(n.trailing_zeros());
-
-    let mut raw_values: Vec<u64> = values.iter().map(|v| v.value).collect();
-
-    let mut d_buffer = CudaBuffer::new(n)?;
-    d_buffer.copy_from_host(&raw_values)?;
-
-    unsafe {
-        cuda_intt(d_buffer.as_ptr(), n as u32, omega.value);
-    }
-
-    d_buffer.copy_to_host(&mut raw_values)?;
-
-    for (i, val) in raw_values.iter().enumerate() {
-        values[i] = BabyBear::new(*val);
-    }
-
+    let ctx = get_or_create_ctx(n);
+    let raw = values.as_mut_ptr() as *mut u64;
+    unsafe { intt_run_inplace(ctx, raw); }
     Ok(())
 }
 
