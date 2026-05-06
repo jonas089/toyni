@@ -11,9 +11,9 @@
 
 ## Status
 
-**The Toyni STARK toolkit is in a solid state.** The core proof system —
-domain construction, NTT-based FFT/IFFT, FRI low-degree testing, Merkle
-commitment, Fiat–Shamir transcript, BabyBear field arithmetic — is
+**The Toyni STARK toolkit is in a solid state.** The core proof system
+(domain construction, NTT-based FFT/IFFT, FRI low-degree testing, Merkle
+commitment, Fiat-Shamir transcript, BabyBear field arithmetic) is
 implemented end-to-end and exercised by the bundled Fibonacci AIR
 (`src/fibonacci.rs` + `src/verifier.rs`). The unit-test suite passes and
 the same primitives are used by the [zkvm](https://github.com/jonas089/zkvm)
@@ -73,7 +73,7 @@ its FFI live in [`cuda/ntt_kernel.cu`](cuda/ntt_kernel.cu) and
 [`src/ntt.rs`](src/ntt.rs); `build.rs` invokes `nvcc` only when the
 feature is enabled.
 
-The path is tuned for repeated NTTs of the same size — the typical
+The path is tuned for repeated NTTs of the same size, the typical
 proving workload. Per `n` it caches forward + inverse twiddles plus a
 reusable device buffer in a global context, eliminating per-call
 `cudaMalloc` / `cudaFree`, host-side twiddle precomputation, and per-stage
@@ -107,12 +107,12 @@ cargo test --features cuda --release
 STARKs achieve their security through a combination of domain extension,
 low-degree testing, and Merkle commitments. The three mechanisms are:
 
-1. **Domain Extension (Blowup)** — the composition polynomial is evaluated
+1. **Domain Extension (Blowup).** The composition polynomial is evaluated
    over a domain `b` times larger than the original trace length.
-2. **Low-Degree Testing** — FRI ensures the polynomial being tested is
+2. **Low-Degree Testing.** FRI ensures the polynomial being tested is
    close to a valid low-degree polynomial, with folding consistency checks
    at each layer.
-3. **Merkle Commitments** — each FRI layer is committed via a Merkle tree,
+3. **Merkle Commitments.** Each FRI layer is committed via a Merkle tree,
    ensuring the integrity of the folding process and enabling efficient
    verification.
 
