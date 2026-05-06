@@ -364,7 +364,8 @@ pub fn eval_boundary_2(x: BabyBear, g: BabyBear, n: usize) -> BabyBear {
 
 #[cfg(test)]
 mod tests {
-    use crate::{babybear::BabyBear, program::trace::ExecutionTrace, prover::StarkProver};
+    use super::StarkProver;
+    use crate::{babybear::BabyBear, program::trace::ExecutionTrace};
 
     #[test]
     fn test_fibonacci() {

@@ -2,7 +2,7 @@
 // Replaces Arkworks GeneralEvaluationDomain
 
 use crate::babybear::BabyBear;
-use crate::ntt_babybear;
+use crate::ntt;
 
 /// Evaluation domain over BabyBear field, supporting standard and coset domains.
 #[derive(Debug, Clone)]
@@ -88,14 +88,14 @@ impl BabyBearDomain {
         // NTT/INTT (GPU or CPU)
         #[cfg(feature = "cuda")]
         if self.use_gpu {
-            if crate::cuda_ntt::cuda_available() {
-                crate::cuda_ntt::intt_cuda(&mut values).expect("CUDA INTT failed");
+            if crate::ntt::cuda_available() {
+                crate::ntt::intt_cuda(&mut values).expect("CUDA INTT failed");
                 self.undo_coset_shift(&mut values);
                 return values;
             }
         }
 
-        ntt_babybear::intt(&mut values, self.omega);
+        ntt::intt(&mut values, self.omega);
         self.undo_coset_shift(&mut values);
         values
     }
@@ -111,13 +111,13 @@ impl BabyBearDomain {
 
         #[cfg(feature = "cuda")]
         if self.use_gpu {
-            if crate::cuda_ntt::cuda_available() {
-                crate::cuda_ntt::ntt_cuda(&mut values).expect("CUDA NTT failed");
+            if crate::ntt::cuda_available() {
+                crate::ntt::ntt_cuda(&mut values).expect("CUDA NTT failed");
                 return values;
             }
         }
 
-        ntt_babybear::ntt(&mut values, self.omega);
+        ntt::ntt(&mut values, self.omega);
         values
     }
 
