@@ -94,8 +94,6 @@ mod cuda {
 
     #[link(name = "ntt_cuda", kind = "static")]
     unsafe extern "C" {
-        fn cuda_ntt(d_values: *mut u64, n: u32, omega: u64);
-        fn cuda_intt(d_values: *mut u64, n: u32, omega: u64);
         fn cuda_copy_to_device(d_dest: *mut u64, h_src: *const u64, count: usize) -> CudaError;
         fn cuda_copy_from_device(h_dest: *mut u64, d_src: *const u64, count: usize) -> CudaError;
         fn cuda_malloc(d_ptr: *mut *mut u64, count: usize) -> CudaError;
@@ -103,35 +101,10 @@ mod cuda {
         fn cuda_get_error_string(error: CudaError) -> *const c_char;
         fn cudaGetDeviceCount(count: *mut i32) -> CudaError;
 
-        pub fn cuda_ntt_batched(
-            d_values: *mut u64,
-            num_ntts: u32,
-            ntt_size: u32,
-            stride: u32,
-            omega: u64,
-        );
-        pub fn cuda_intt_batched(
-            d_values: *mut u64,
-            num_ntts: u32,
-            ntt_size: u32,
-            stride: u32,
-            omega: u64,
-        );
-
-        pub fn cuda_rs_encode_vertical(
-            d_input: *const u64,
-            d_output: *mut u64,
-            d_intt_work: *mut u64,
-            num_positions: u32,
-            ntt_size_k: u32,
-            ntt_size_kn: u32,
-            omega_k: u64,
-            omega_kn: u64,
-        );
-
         // Persistent NTT context: caches twiddles + reusable device buffer per n.
+        // Contexts are cached for the lifetime of the process (see `get_or_create_ctx`),
+        // so `ntt_ctx_destroy` is only declared on the C side; Rust never calls it.
         fn ntt_ctx_create(n: u32) -> *mut std::ffi::c_void;
-        fn ntt_ctx_destroy(ctx: *mut std::ffi::c_void);
         fn ntt_run_inplace(ctx: *mut std::ffi::c_void, h_data: *mut u64);
         fn intt_run_inplace(ctx: *mut std::ffi::c_void, h_data: *mut u64);
     }
@@ -339,10 +312,7 @@ mod cuda {
 }
 
 #[cfg(feature = "cuda")]
-pub use cuda::{
-    cuda_available, cuda_intt_batched, cuda_ntt_batched, cuda_rs_encode_vertical, intt_cuda,
-    ntt_cuda, CudaBuffer,
-};
+pub use cuda::{cuda_available, intt_cuda, ntt_cuda, CudaBuffer};
 
 #[cfg(test)]
 mod tests {
