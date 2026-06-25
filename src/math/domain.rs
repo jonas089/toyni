@@ -2,6 +2,7 @@
 // Replaces Arkworks GeneralEvaluationDomain
 
 use crate::babybear::BabyBear;
+use crate::ext::Ext;
 use crate::ntt;
 
 /// Evaluation domain over BabyBear field, supporting standard and coset domains.
@@ -121,6 +122,34 @@ impl BabyBearDomain {
         values
     }
 
+    /// IFFT over the extension field. Because the twiddle factors (roots of
+    /// unity, coset shift) live in the base field, the transform is base-linear
+    /// and applies independently to each of the four extension coordinates — so
+    /// an Ext FFT is just four base FFTs.
+    pub fn ifft_ext(&self, evals: &[Ext]) -> Vec<Ext> {
+        self.transform_ext(evals, |coord| self.ifft(coord))
+    }
+
+    /// FFT over the extension field (four base FFTs, one per coordinate).
+    pub fn fft_ext(&self, coeffs: &[Ext]) -> Vec<Ext> {
+        self.transform_ext(coeffs, |coord| self.fft(coord))
+    }
+
+    /// Split Ext values into four base-coordinate vectors, apply a base
+    /// transform to each, and recombine.
+    fn transform_ext(&self, input: &[Ext], f: impl Fn(&[BabyBear]) -> Vec<BabyBear>) -> Vec<Ext> {
+        let mut coords: [Vec<BabyBear>; 4] = [
+            Vec::with_capacity(input.len()), Vec::with_capacity(input.len()),
+            Vec::with_capacity(input.len()), Vec::with_capacity(input.len()),
+        ];
+        for v in input {
+            for k in 0..4 { coords[k].push(v.c[k]); }
+        }
+        let out: Vec<Vec<BabyBear>> = coords.iter().map(|c| f(c)).collect();
+        let n = out[0].len();
+        (0..n).map(|i| Ext::new([out[0][i], out[1][i], out[2][i], out[3][i]])).collect()
+    }
+
     /// Apply coset shift: multiply values[i] by shift^i (for coset FFT).
     fn apply_coset_shift(&self, values: &mut [BabyBear]) {
         if self.shift.value != 1 {
@@ -209,6 +238,42 @@ mod tests {
                 "Coset evaluation mismatch at index {}",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn test_ext_fft_ifft_roundtrip() {
+        use crate::ext::Ext;
+        let domain = BabyBearDomain::new(8);
+        let coeffs: Vec<Ext> = (0..8)
+            .map(|i| Ext::new([
+                BabyBear::new(i * 3 + 1), BabyBear::new(i + 2),
+                BabyBear::new(i * 7), BabyBear::new(i + 5),
+            ]))
+            .collect();
+        let evals = domain.fft_ext(&coeffs);
+        let recovered = domain.ifft_ext(&evals);
+        assert_eq!(coeffs, recovered, "Ext FFT/IFFT roundtrip failed");
+    }
+
+    #[test]
+    fn test_ext_fft_evaluates_correctly() {
+        use crate::ext::Ext;
+        let domain = BabyBearDomain::new(8);
+        let coeffs: Vec<Ext> = (0..3)
+            .map(|i| Ext::new([
+                BabyBear::new(i + 1), BabyBear::new(i * 2),
+                BabyBear::new(i + 4), BabyBear::new(7),
+            ]))
+            .collect();
+        let evals = domain.fft_ext(&coeffs);
+        for (i, &x) in domain.elements().iter().enumerate() {
+            // Horner evaluation of the Ext polynomial at the base domain point x.
+            let mut acc = Ext::zero();
+            for c in coeffs.iter().rev() {
+                acc = acc.mul_base(x) + *c;
+            }
+            assert_eq!(evals[i], acc, "Ext FFT eval mismatch at {}", i);
         }
     }
 

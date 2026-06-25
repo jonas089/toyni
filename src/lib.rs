@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 
 pub mod babybear;
+pub mod ext;
 pub mod ntt;
 
 pub mod fibonacci;

@@ -1,4 +1,5 @@
 use crate::babybear::BabyBear;
+use crate::ext::Ext;
 use crate::digest_sha2;
 
 /// Fiat-Shamir transcript for deriving verifier challenges deterministically.
@@ -35,6 +36,22 @@ impl FiatShamirTranscript {
         // Feed the hash back into state so subsequent squeezes differ
         self.state = hash.to_vec();
         BabyBear::from_bytes_mod_order(&hash)
+    }
+
+    /// Squeeze an extension-field challenge (four independent base squeezes).
+    /// Used wherever soundness needs the full ~124-bit challenge space.
+    pub fn squeeze_ext_challenge(&mut self) -> Ext {
+        Ext::new([
+            self.squeeze_challenge(),
+            self.squeeze_challenge(),
+            self.squeeze_challenge(),
+            self.squeeze_challenge(),
+        ])
+    }
+
+    /// Absorb an extension-field element (32 bytes).
+    pub fn absorb_ext(&mut self, val: Ext) {
+        self.absorb(&val.to_bytes());
     }
 
     /// Squeeze `count` distinct query indices in [0, max).
