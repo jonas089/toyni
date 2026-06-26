@@ -53,11 +53,9 @@ impl StarkVerifier {
             return false;
         }
 
-        // FRI folds a FIXED number of rounds down to the degree-bound layer of
-        // size lde_size / D_BOUND; that final layer must be a constant codeword.
-        // This is the low-degree enforcement (per-query fold-consistency does not
-        // test degree). D_BOUND = next_pow2(trace_len + MASK_DEGREE) accounts for
-        // the trace blinding.
+        // Fold down to the degree-bound layer (size lde/D_BOUND) and require it
+        // to be constant. This enforces the degree bound; fold-consistency alone
+        // does not. D_BOUND = next_pow2(trace_len + MASK_DEGREE) covers masking.
         let fri_degree_bound = (trace_len + MASK_DEGREE).next_power_of_two();
         let final_layer_size = lde_size / fri_degree_bound;
         let expected_folds = (lde_size / final_layer_size).trailing_zeros() as usize;
@@ -67,7 +65,7 @@ impl StarkVerifier {
         if proof.fri_final_layer.len() != final_layer_size {
             return false;
         }
-        // (i) final layer is constant (degree 0 on the size-final_layer_size domain).
+        // Final layer is constant (degree 0).
         if !proof
             .fri_final_layer
             .iter()
@@ -75,8 +73,7 @@ impl StarkVerifier {
         {
             return false;
         }
-        // (ii) the in-clear final layer matches its commitment, binding ALL of
-        // its positions (not just queried ones) to the Fiat-Shamir transcript.
+        // Final layer matches its commitment (binds all positions to the transcript).
         if merkle_root_of(&proof.fri_final_layer) != *proof.fri_commitments.last().unwrap() {
             return false;
         }
@@ -225,9 +222,7 @@ impl StarkVerifier {
                 pos = lo;
             }
 
-            // 6g. Final FRI layer check: folding this query position through
-            //     every committed layer must land on the matching position of
-            //     the (constant, commitment-bound) final layer.
+            // 6g. The folded query position must land on the final layer.
             if proof.fri_final_layer[pos] != prev_folded {
                 return false;
             }
@@ -242,8 +237,7 @@ fn verify_opening(opening: &MerkleOpening, root: &[u8]) -> bool {
     verify_merkle_proof(leaf, &opening.proof, &root.to_vec())
 }
 
-/// Recompute the Merkle root of a layer's values, matching the prover's
-/// `build_merkle_tree` (leaf = field element little-endian bytes).
+/// Merkle root of unsalted leaves; matches `build_unsalted_tree`.
 fn merkle_root_of(values: &[BabyBear]) -> Vec<u8> {
     let leaves: Vec<Vec<u8>> = values.iter().map(|v| v.to_bytes().to_vec()).collect();
     MerkleTree::new(leaves).root().unwrap()
@@ -308,9 +302,8 @@ mod tests {
 
     #[test]
     fn test_masking_is_zero_knowledge() {
-        // Two proofs of the SAME trace use fresh blinding R, so their openings
-        // (here, the out-of-domain trace evaluation T̂(z) = T(z) + Z_H(z)·R(z))
-        // differ — they carry randomness, not the witness — yet both verify.
+        // Two proofs of the same trace use fresh blinding, so their openings
+        // (here the OOD evaluation t_z) differ, yet both verify.
         let p1 = make_valid_proof();
         let p2 = make_valid_proof();
         let verifier = StarkVerifier;

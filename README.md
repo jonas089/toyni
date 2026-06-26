@@ -15,9 +15,10 @@
 (domain construction, NTT-based FFT/IFFT, FRI low-degree testing, Merkle
 commitment, Fiat-Shamir transcript, BabyBear field arithmetic) is
 implemented end-to-end and exercised by the bundled Fibonacci AIR
-(`src/fibonacci.rs` + `src/verifier.rs`). The unit-test suite passes and
-the same primitives are used by the [zkvm](https://github.com/jonas089/zkvm)
-project as its proving backend.
+(`src/fibonacci.rs` + `src/verifier.rs`). FRI enforces its degree bound via a
+final-layer constancy check, and the Fibonacci prover is zero-knowledge
+(trace blinding + salted Merkle leaves). The unit-test suite passes, and the
+same primitives back the [zkvm](https://github.com/jonas089/zkvm) project.
 
 What is **not** in scope for Toyni: the AIR for any non-trivial program.
 Toyni provides the building blocks; consumers (like zkvm) define their own
@@ -81,20 +82,6 @@ H2D copies. Mul reduction inside butterflies uses Barrett with
 `mu = floor(2^64 / p)`. The build emits native code for sm_75/86/89 and,
 when the toolkit supports it, sm_120 for Blackwell GPUs (RTX 50xx); a
 forward-compat PTX target is always emitted as a fallback.
-
-### NTT benchmark (RTX 5090, driver 595, CUDA 13)
-
-End-to-end zkvm prover wall-time on the bundled `heavy-rust` example
-(trace ≈ 2²⁰, LDE ≈ 2²³, ~491 NTTs of size 2²⁰ and 2²³ combined):
-
-| Backend | Wall time |
-|---------|-----------|
-| CPU only | ~150 s |
-| CUDA NTT (this branch) | ~11 s |
-
-That's a ~13× speedup attributable almost entirely to the NTT path. The
-remaining wall time is single-threaded CPU work in the consuming zkvm's
-constraint and DEEP loops, which are not part of Toyni.
 
 Build and test the CUDA path with:
 
