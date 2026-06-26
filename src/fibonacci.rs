@@ -7,13 +7,24 @@ use crate::program::trace::ExecutionTrace;
 use crate::transcript::FiatShamirTranscript;
 
 /// Number of spot-check queries the verifier performs.
-/// With blowup 8, each query gives ~3 bits of security (rejection prob 7/8).
-/// 44 queries → ~132 bits of security.
+/// The masked DEEP composition is tested at rate 1/8 (D_BOUND/lde), so each
+/// query gives ~3 bits and 44 queries → ~132 bits of security.
 pub const NUM_QUERIES: usize = 44;
-/// LDE blowup factor.
-pub const BLOWUP: usize = 8;
+/// LDE blowup factor. Zero-knowledge masking raises the trace degree to
+/// roughly 3·trace_len (see MASK_DEGREE), so the DEEP composition has degree
+/// < 4·trace_len. Blowup 32 keeps the tested Reed–Solomon rate at 1/8
+/// (D_BOUND/lde = 4n/32n) — i.e. masking is paid for in domain size, not
+/// soundness.
+pub const BLOWUP: usize = 32;
 /// Coset shift used for the LDE domain.
 pub const COSET_SHIFT: u64 = 7;
+/// Number of random blinding coefficients added to the trace polynomial for
+/// zero-knowledge: T̂(x) = T(x) + Z_H(x)·R(x) with R uniformly random of this
+/// many coefficients. It must cover every trace evaluation the verifier sees —
+/// 3 openings per query (T̂ at x, g·x, g²·x) plus the 3 out-of-domain points
+/// (z, g·z, g²·z) — so that those evaluations are jointly uniform and reveal
+/// nothing about the witness. 3·NUM_QUERIES + 3 = 135 suffices; a little margin.
+pub const MASK_DEGREE: usize = 3 * NUM_QUERIES + 8;
 
 // ── proof data structures ──────────────────────────────────────────────
 
@@ -70,7 +81,10 @@ pub struct StarkProof {
 
     // FRI commitments (layer 0 = DEEP evals, then each folded layer)
     pub fri_commitments: Vec<Vec<u8>>,
-    pub fri_final_value: BabyBear,
+    /// The full final FRI layer, sent in the clear. The verifier checks it is a
+    /// genuine low-degree (constant) codeword — the low-degree enforcement that
+    /// per-query fold-consistency does not provide on its own.
+    pub fri_final_layer: Vec<BabyBear>,
 
     // per-query openings
     pub query_proofs: Vec<QueryProof>,
@@ -98,9 +112,19 @@ impl StarkProver {
         let z_poly = Polynomial::new(domain.vanishing_poly_coeffs());
         let g = domain.group_gen();
 
-        // ── 1. trace polynomial ────────────────────────────────────────
+        // ── 1. trace polynomial (+ zero-knowledge masking) ─────────────
         let domain_elements = domain.elements();
         let trace_poly = self.trace.interpolate_column(&domain_elements, 0);
+
+        // Mask: T̂ = T + Z_H·R with R uniformly random. Z_H vanishes on the
+        // trace domain H, so T̂ = T on H — the constraints (and thus soundness
+        // and completeness) are untouched — but off H the LDE, query, and OOD
+        // openings of T̂ are uniformly random and reveal nothing about the trace.
+        let mut rng = rand::thread_rng();
+        let r_poly = Polynomial::new(
+            (0..MASK_DEGREE).map(|_| BabyBear::random(&mut rng)).collect(),
+        );
+        let trace_poly = trace_poly.add(&z_poly.multiply(&r_poly));
 
         // Evaluate trace poly on the shifted LDE domain and commit
         let shifted_elements = shifted_domain.elements();
@@ -195,11 +219,16 @@ impl StarkProver {
         let mut current = d_evals;
         let mut xs: Vec<BabyBear> = shifted_elements.clone();
 
-        loop {
-            if current.len() <= 1 {
-                break;
-            }
-
+        // Fold a FIXED number of rounds down to the degree-bound layer of size
+        // lde_size / D_BOUND, where D_BOUND bounds deg(D). Masking raises the
+        // trace degree, so deg(D) < D_BOUND = next_pow2(trace_len + MASK_DEGREE)
+        // (≈ 4·trace_len). For an honest codeword that final layer is constant;
+        // the verifier reads it whole and checks that constancy — THAT is what
+        // enforces the low-degree bound. The round count is data-independent (no
+        // early "constant yet?" break), so a malicious prover cannot stop early.
+        let fri_degree_bound = (trace_len + MASK_DEGREE).next_power_of_two();
+        let final_layer_size = lde_size / fri_degree_bound;
+        while current.len() > final_layer_size {
             let beta = transcript.squeeze_challenge();
 
             let folded = fri_fold(&current, &xs, beta);
@@ -210,9 +239,6 @@ impl StarkProver {
                 *x = *x * *x;
             }
 
-            // Check if constant
-            let is_constant = folded.iter().all(|v| *v == folded[0]);
-
             fri_layers.push(folded.clone());
             let tree = build_merkle_tree(&folded);
             let root = tree.root().unwrap();
@@ -221,13 +247,9 @@ impl StarkProver {
             fri_trees.push(tree);
 
             current = folded;
-
-            if is_constant {
-                break;
-            }
         }
 
-        let fri_final_value = current[0];
+        let fri_final_layer = current;
 
         // ── 7. Query phase ─────────────────────────────────────────────
         let first_layer_half = fri_layers[0].len() / 2;
@@ -287,7 +309,7 @@ impl StarkProver {
             t_ggz,
             q_z,
             fri_commitments,
-            fri_final_value,
+            fri_final_layer,
             query_proofs,
         }
     }

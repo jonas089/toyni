@@ -1,10 +1,10 @@
 use crate::babybear::BabyBear;
 use crate::math::domain::BabyBearDomain;
 use crate::math::polynomial::Polynomial;
-use crate::merkle::verify_merkle_proof;
+use crate::merkle::{verify_merkle_proof, MerkleTree};
 use crate::fibonacci::{
     eval_boundary_1, eval_boundary_2, eval_fibonacci_constraint, MerkleOpening, StarkProof,
-    BLOWUP, COSET_SHIFT, NUM_QUERIES,
+    BLOWUP, COSET_SHIFT, MASK_DEGREE, NUM_QUERIES,
 };
 use crate::transcript::FiatShamirTranscript;
 
@@ -52,6 +52,35 @@ impl StarkVerifier {
         if proof.fri_commitments.is_empty() {
             return false;
         }
+
+        // FRI folds a FIXED number of rounds down to the degree-bound layer of
+        // size lde_size / D_BOUND; that final layer must be a constant codeword.
+        // This is the low-degree enforcement (per-query fold-consistency does not
+        // test degree). D_BOUND = next_pow2(trace_len + MASK_DEGREE) accounts for
+        // the trace blinding.
+        let fri_degree_bound = (trace_len + MASK_DEGREE).next_power_of_two();
+        let final_layer_size = lde_size / fri_degree_bound;
+        let expected_folds = (lde_size / final_layer_size).trailing_zeros() as usize;
+        if proof.fri_commitments.len() != expected_folds + 1 {
+            return false;
+        }
+        if proof.fri_final_layer.len() != final_layer_size {
+            return false;
+        }
+        // (i) final layer is constant (degree 0 on the size-final_layer_size domain).
+        if !proof
+            .fri_final_layer
+            .iter()
+            .all(|v| *v == proof.fri_final_layer[0])
+        {
+            return false;
+        }
+        // (ii) the in-clear final layer matches its commitment, binding ALL of
+        // its positions (not just queried ones) to the Fiat-Shamir transcript.
+        if merkle_root_of(&proof.fri_final_layer) != *proof.fri_commitments.last().unwrap() {
+            return false;
+        }
+
         transcript.absorb_commitment(&proof.fri_commitments[0]);
 
         let num_fri_folds = proof.fri_commitments.len() - 1;
@@ -79,6 +108,11 @@ impl StarkVerifier {
         for (qi_idx, qp) in proof.query_proofs.iter().enumerate() {
             let qi = query_indices[qi_idx];
             if qp.index != qi {
+                return false;
+            }
+            // The query must carry exactly the intermediate-layer openings the
+            // fixed fold schedule produces (layers 1..final, exclusive).
+            if qp.fri_openings.len() != expected_folds - 1 {
                 return false;
             }
 
@@ -191,8 +225,10 @@ impl StarkVerifier {
                 pos = lo;
             }
 
-            // 6g. Final FRI value check
-            if prev_folded != proof.fri_final_value {
+            // 6g. Final FRI layer check: folding this query position through
+            //     every committed layer must land on the matching position of
+            //     the (constant, commitment-bound) final layer.
+            if proof.fri_final_layer[pos] != prev_folded {
                 return false;
             }
         }
@@ -204,6 +240,13 @@ impl StarkVerifier {
 fn verify_opening(opening: &MerkleOpening, root: &[u8]) -> bool {
     let leaf = opening.value.to_bytes().to_vec();
     verify_merkle_proof(leaf, &opening.proof, &root.to_vec())
+}
+
+/// Recompute the Merkle root of a layer's values, matching the prover's
+/// `build_merkle_tree` (leaf = field element little-endian bytes).
+fn merkle_root_of(values: &[BabyBear]) -> Vec<u8> {
+    let leaves: Vec<Vec<u8>> = values.iter().map(|v| v.to_bytes().to_vec()).collect();
+    MerkleTree::new(leaves).root().unwrap()
 }
 
 fn derive_z_verifier(
@@ -264,6 +307,18 @@ mod tests {
     }
 
     #[test]
+    fn test_masking_is_zero_knowledge() {
+        // Two proofs of the SAME trace use fresh blinding R, so their openings
+        // (here, the out-of-domain trace evaluation T̂(z) = T(z) + Z_H(z)·R(z))
+        // differ — they carry randomness, not the witness — yet both verify.
+        let p1 = make_valid_proof();
+        let p2 = make_valid_proof();
+        let verifier = StarkVerifier;
+        assert!(verifier.verify(&p1) && verifier.verify(&p2));
+        assert_ne!(p1.t_z, p2.t_z, "masking should randomize the openings");
+    }
+
+    #[test]
     fn test_verifier_rejects_bad_ood_value() {
         let mut proof = make_valid_proof();
         // Tamper with OOD trace evaluation → breaks constraint check C(z)=Q(z)*Z(z)
@@ -275,10 +330,10 @@ mod tests {
     #[test]
     fn test_verifier_rejects_bad_fri_final() {
         let mut proof = make_valid_proof();
-        // Tamper with final FRI constant → breaks fold consistency
-        proof.fri_final_value = proof.fri_final_value + BabyBear::one();
+        // Tamper with one final-layer value → breaks constancy + commitment + fold consistency
+        proof.fri_final_layer[0] = proof.fri_final_layer[0] + BabyBear::one();
         let verifier = StarkVerifier;
-        assert!(!verifier.verify(&proof), "Verifier should reject tampered FRI final value");
+        assert!(!verifier.verify(&proof), "Verifier should reject tampered FRI final layer");
     }
 
     #[test]
