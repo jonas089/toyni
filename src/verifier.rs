@@ -238,7 +238,7 @@ impl StarkVerifier {
 }
 
 fn verify_opening(opening: &MerkleOpening, root: &[u8]) -> bool {
-    let leaf = opening.value.to_bytes().to_vec();
+    let leaf = [opening.salt.as_slice(), &opening.value.to_bytes()].concat();
     verify_merkle_proof(leaf, &opening.proof, &root.to_vec())
 }
 

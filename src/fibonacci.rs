@@ -5,6 +5,7 @@ use crate::math::polynomial::Polynomial;
 use crate::merkle::{MerkleProof, MerkleTree};
 use crate::program::trace::ExecutionTrace;
 use crate::transcript::FiatShamirTranscript;
+use rand::Rng;
 
 /// Number of spot-check queries the verifier performs.
 /// The masked DEEP composition is tested at rate 1/8 (D_BOUND/lde), so each
@@ -34,6 +35,10 @@ pub struct MerkleOpening {
     pub index: usize,
     pub value: BabyBear,
     pub proof: MerkleProof,
+    /// Per-leaf zero-knowledge salt: the leaf is committed as H(salt ‖ value).
+    /// Revealed only for opened leaves, so an unopened sibling hash over a small
+    /// base-field value cannot be brute-forced to recover the masked witness.
+    pub salt: Vec<u8>,
 }
 
 /// All the data the verifier needs to check one query position across
@@ -132,7 +137,7 @@ impl StarkProver {
             .iter()
             .map(|&x| trace_poly.evaluate(x))
             .collect();
-        let trace_tree = build_merkle_tree(&trace_lde);
+        let trace_tree = build_merkle_tree(&trace_lde, &mut rng);
         let trace_commitment = trace_tree.root().unwrap();
 
         // ── 2. constraint & quotient ───────────────────────────────────
@@ -156,7 +161,7 @@ impl StarkProver {
             .collect();
         let q_poly = Polynomial::new(shifted_domain.ifft(&q_evals));
 
-        let quotient_tree = build_merkle_tree(&q_evals);
+        let quotient_tree = build_merkle_tree(&q_evals, &mut rng);
         let quotient_commitment = quotient_tree.root().unwrap();
 
         // ── 3. Fiat-Shamir: derive OOD point z ────────────────────────
@@ -205,12 +210,12 @@ impl StarkProver {
 
         // ── 6. FRI folding with Merkle commits ────────────────────────
         let mut fri_layers: Vec<Vec<BabyBear>> = Vec::new();
-        let mut fri_trees: Vec<MerkleTree> = Vec::new();
+        let mut fri_trees: Vec<SaltedTree> = Vec::new();
         let mut fri_commitments: Vec<Vec<u8>> = Vec::new();
 
         // Layer 0 = DEEP evaluations
         fri_layers.push(d_evals.clone());
-        let tree0 = build_merkle_tree(&d_evals);
+        let tree0 = build_merkle_tree(&d_evals, &mut rng);
         let root0 = tree0.root().unwrap();
         transcript.absorb_commitment(&root0);
         fri_commitments.push(root0);
@@ -240,7 +245,11 @@ impl StarkProver {
             }
 
             fri_layers.push(folded.clone());
-            let tree = build_merkle_tree(&folded);
+            let tree = if folded.len() == final_layer_size {
+                build_unsalted_tree(&folded)
+            } else {
+                build_merkle_tree(&folded, &mut rng)
+            };
             let root = tree.root().unwrap();
             transcript.absorb_commitment(&root);
             fri_commitments.push(root);
@@ -329,19 +338,53 @@ fn boundary_constraint_2(x: BabyBear, g: BabyBear, n: usize) -> BabyBear {
     x - g.pow((n - 2) as u64)
 }
 
-/// Build a Merkle tree from field element evaluations.
-fn build_merkle_tree(evals: &[BabyBear]) -> MerkleTree {
-    let leaves: Vec<Vec<u8>> = evals.iter().map(|v| v.to_bytes().to_vec()).collect();
-    MerkleTree::new(leaves)
+/// A Merkle tree plus the per-leaf salts used to build it.
+struct SaltedTree {
+    tree: MerkleTree,
+    salts: Vec<Vec<u8>>,
 }
 
-/// Open a Merkle tree at a given index.
-fn open_merkle(tree: &MerkleTree, evals: &[BabyBear], index: usize) -> MerkleOpening {
-    let proof = tree.get_proof(index).expect("Index out of bounds");
+impl SaltedTree {
+    fn root(&self) -> Option<Vec<u8>> {
+        self.tree.root()
+    }
+}
+
+/// Build a salted Merkle tree (leaf = salt ‖ value) — a hiding commitment.
+fn build_merkle_tree(evals: &[BabyBear], rng: &mut impl Rng) -> SaltedTree {
+    let salts: Vec<Vec<u8>> = (0..evals.len())
+        .map(|_| rng.r#gen::<[u8; 16]>().to_vec())
+        .collect();
+    let leaves: Vec<Vec<u8>> = evals
+        .iter()
+        .zip(&salts)
+        .map(|(v, s)| [s.as_slice(), &v.to_bytes()].concat())
+        .collect();
+    SaltedTree {
+        tree: MerkleTree::new(leaves),
+        salts,
+    }
+}
+
+/// Build an UNsalted tree (leaf = value), for the in-clear final FRI layer whose
+/// root the verifier recomputes directly. Its values are public, so salting
+/// would only block that recomputation.
+fn build_unsalted_tree(evals: &[BabyBear]) -> SaltedTree {
+    let leaves: Vec<Vec<u8>> = evals.iter().map(|v| v.to_bytes().to_vec()).collect();
+    SaltedTree {
+        tree: MerkleTree::new(leaves),
+        salts: vec![Vec::new(); evals.len()],
+    }
+}
+
+/// Open a salted Merkle tree at a given index.
+fn open_merkle(tree: &SaltedTree, evals: &[BabyBear], index: usize) -> MerkleOpening {
+    let proof = tree.tree.get_proof(index).expect("Index out of bounds");
     MerkleOpening {
         index,
         value: evals[index],
         proof,
+        salt: tree.salts[index].clone(),
     }
 }
 
