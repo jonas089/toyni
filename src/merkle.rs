@@ -23,7 +23,12 @@ impl MerkleTree {
     }
 
     pub fn build_tree(&mut self) {
-        let mut current_level = self.leaves.clone();
+        // Leaf level is the domain-separated hash of each supplied leaf. This
+        // both hashes raw (e.g. unhashed field-element) leaves and tags them so
+        // a leaf can never be reinterpreted as an internal node (see hash_leaf /
+        // hash_node).
+        let mut current_level: Vec<Vec<u8>> =
+            self.leaves.iter().map(|leaf| hash_leaf(leaf)).collect();
         self.levels.push(current_level.clone());
 
         while current_level.len() > 1 {
@@ -35,11 +40,7 @@ impl MerkleTree {
                 } else {
                     current_level.get(i).unwrap() // Duplicate last node if odd number
                 };
-
-                let mut combined = Vec::new();
-                combined.extend_from_slice(left);
-                combined.extend_from_slice(right);
-                next_level.push(sha_digest(&combined));
+                next_level.push(hash_node(left, right));
             }
             current_level = next_level;
             self.levels.push(current_level.clone());
@@ -84,26 +85,40 @@ impl MerkleTree {
 }
 
 pub fn verify_merkle_proof(leaf: Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
-    let mut current_hash = leaf.clone();
+    // Mirror build_tree: the supplied leaf is first domain-separated as a leaf,
+    // then combined upward as internal nodes.
+    let mut current_hash = hash_leaf(&leaf);
 
     for (sibling, is_right) in proof.path.iter().zip(proof.position.iter()) {
-        let mut combined = Vec::new();
-        if *is_right {
-            combined.extend_from_slice(sibling);
-            combined.extend_from_slice(&current_hash);
+        current_hash = if *is_right {
+            hash_node(sibling, &current_hash)
         } else {
-            combined.extend_from_slice(&current_hash);
-            combined.extend_from_slice(sibling);
-        }
-        current_hash = sha_digest(&combined);
+            hash_node(&current_hash, sibling)
+        };
     }
 
     current_hash == *root
 }
 
-fn sha_digest(data: &[u8]) -> Vec<u8> {
+/// Domain-separation tags keep the leaf and internal-node hash spaces disjoint,
+/// so an internal node hash can never be presented as a leaf (or vice versa).
+const LEAF_TAG: u8 = 0x00;
+const NODE_TAG: u8 = 0x01;
+
+/// Hash a leaf: `SHA256(0x00 || leaf)`.
+fn hash_leaf(data: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
+    hasher.update([LEAF_TAG]);
     hasher.update(data);
+    hasher.finalize().to_vec()
+}
+
+/// Hash an internal node: `SHA256(0x01 || left || right)`.
+fn hash_node(left: &[u8], right: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update([NODE_TAG]);
+    hasher.update(left);
+    hasher.update(right);
     hasher.finalize().to_vec()
 }
 
@@ -111,56 +126,65 @@ fn sha_digest(data: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    fn leaf(n: u64) -> Vec<u8> {
+        n.to_le_bytes().to_vec()
+    }
+
     #[test]
     fn test_merkle_proof_verification() {
-        // Create leaves
-        let leaves = vec![
-            sha_digest(&1u64.to_le_bytes()),
-            sha_digest(&2u64.to_le_bytes()),
-            sha_digest(&3u64.to_le_bytes()),
-            sha_digest(&4u64.to_le_bytes()),
-        ];
-
-        let tree = MerkleTree::new(leaves);
+        let leaves: Vec<Vec<u8>> = (1..=4).map(leaf).collect();
+        let tree = MerkleTree::new(leaves.clone());
         let root = tree.root().unwrap();
 
-        // Test proof for each leaf
         for i in 0..4 {
             let proof = tree.get_proof(i).unwrap();
-            let leaf = sha_digest(&(i as u64 + 1).to_le_bytes());
-            assert!(verify_merkle_proof(leaf, &proof, &root));
+            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
         }
     }
 
     #[test]
     fn test_merkle_proof_odd_leaves() {
-        // Test with odd number of leaves
-        let leaves = vec![
-            sha_digest(&1u64.to_le_bytes()),
-            sha_digest(&2u64.to_le_bytes()),
-            sha_digest(&3u64.to_le_bytes()),
-        ];
-
-        let tree = MerkleTree::new(leaves);
+        let leaves: Vec<Vec<u8>> = (1..=3).map(leaf).collect();
+        let tree = MerkleTree::new(leaves.clone());
         let root = tree.root().unwrap();
 
-        // Test proof for each leaf
         for i in 0..3 {
             let proof = tree.get_proof(i).unwrap();
-            let leaf = sha_digest(&(i as u64 + 1).to_le_bytes());
-            assert!(verify_merkle_proof(leaf, &proof, &root));
+            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
         }
     }
 
     #[test]
     fn test_merkle_proof_single_leaf() {
-        // Test with single leaf
-        let leaves = vec![sha_digest(&1u64.to_le_bytes())];
+        let leaves = vec![leaf(1)];
+        let tree = MerkleTree::new(leaves.clone());
+        let root = tree.root().unwrap();
+
+        let proof = tree.get_proof(0).unwrap();
+        assert!(verify_merkle_proof(leaves[0].clone(), &proof, &root));
+    }
+
+    #[test]
+    fn test_wrong_leaf_rejected() {
+        let leaves: Vec<Vec<u8>> = (1..=4).map(leaf).collect();
         let tree = MerkleTree::new(leaves);
         let root = tree.root().unwrap();
 
         let proof = tree.get_proof(0).unwrap();
-        let leaf = sha_digest(&1u64.to_le_bytes());
-        assert!(verify_merkle_proof(leaf, &proof, &root));
+        // A different leaf value at position 0 must not verify.
+        assert!(!verify_merkle_proof(leaf(99), &proof, &root));
+    }
+
+    #[test]
+    fn test_leaf_node_domain_separation() {
+        // A two-leaf root is hash_node(hash_leaf(a), hash_leaf(b)). Because
+        // leaves are tagged 0x00 and nodes 0x01, that node hash cannot be
+        // reinterpreted as a leaf: committing to it as a single leaf yields a
+        // different root, so an internal node can never masquerade as a leaf.
+        let tree = MerkleTree::new(vec![leaf(1), leaf(2)]);
+        let node_root = tree.root().unwrap();
+
+        let masquerade = MerkleTree::new(vec![node_root.clone()]);
+        assert_ne!(masquerade.root().unwrap(), node_root);
     }
 }

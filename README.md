@@ -104,28 +104,32 @@ cargo test --features cuda --release
 
 ## Theory: security properties
 
-STARKs achieve their security through a combination of domain extension,
-low-degree testing, and Merkle commitments. The three mechanisms are:
+STARKs achieve their security through domain extension, low-degree testing,
+and Merkle commitments:
 
-1. **Domain Extension (Blowup).** The composition polynomial is evaluated
-   over a domain `b` times larger than the original trace length.
-2. **Low-Degree Testing.** FRI ensures the polynomial being tested is
-   close to a valid low-degree polynomial, with folding consistency checks
-   at each layer.
-3. **Merkle Commitments.** Each FRI layer is committed via a Merkle tree,
-   ensuring the integrity of the folding process and enabling efficient
-   verification.
+1. **Domain Extension (Blowup).** The trace is extended to a domain `b`× larger
+   than the trace length (here `b = 32`, sized to absorb the zero-knowledge
+   masking below).
+2. **Low-Degree Testing.** FRI folds the DEEP composition a *fixed* number of
+   rounds down to a degree-bound layer, and the verifier reads that whole final
+   layer and checks it is a constant (low-degree) codeword. **That final-layer
+   check is what enforces the degree bound** — folding all the way to a single
+   value and checking only that scalar enforces nothing and is forgeable.
+3. **Merkle Commitments.** Each layer is committed via a Merkle tree; leaves are
+   domain-separated, and the hiding (witness-carrying) trees are also salted.
 
-The soundness error (probability of accepting an invalid proof) is
-bounded by:
+The soundness error is roughly `ρ^q`, where `ρ` is the tested Reed–Solomon rate
+and `q` the number of queries. The masked composition is tested at rate `1/8`
+(degree bound `4·trace_len` over a `32·trace_len` domain), so 44 queries give
+`~(1/8)^44 ≈ 2^-132`.
 
-```
-Pr[undetected cheat] = (1/b)^q
-```
+### Zero-knowledge
 
-where `b` is the blowup factor and `q` is the number of queries. With
-blowup 8 and 10 queries, the soundness error is at most
-`(1/8)^10 ≈ 10⁻⁷`.
+The trace polynomial is blinded as `T̂ = T + Z_H·R` with `R` uniformly random.
+Because `Z_H` vanishes on the trace domain, `T̂ = T` there (constraints, and thus
+soundness and completeness, are unchanged), but off it the LDE / query / OOD
+openings are uniformly random. Together with per-leaf Merkle salting, the
+verifier's view reveals nothing about the witness.
 
 ## Associated With
 
