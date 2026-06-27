@@ -5,10 +5,6 @@
 > suitable for production use. Do not rely on it for any setting where a
 > broken proof would have real-world consequences.
 
-> [!NOTE]
-> Toyni was migrated from [jonas089's Github](https://github.com/jonas089/Toyni).
-> Click [here](https://github.com/jonas089/Toyni) to see the past commit history.
-
 ## Status
 
 **The Toyni STARK toolkit is in a solid state.** The core proof system
