@@ -1,7 +1,7 @@
 # Toyni: A STARK Implementation in Progress
 
 > [!CAUTION]
-> **This is research / hobby code.** It has **not** been audited and is not
+> **This is a research project.** It has **not** been audited and is not
 > suitable for production use. Do not rely on it for any setting where a
 > broken proof would have real-world consequences.
 
