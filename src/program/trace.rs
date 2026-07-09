@@ -25,6 +25,12 @@ impl ExecutionTrace {
         }
     }
 
+    /// Get a column by index
+    pub fn get_column(&self, column_idx: usize) -> Vec<BabyBear>{
+        self.trace.iter().map(|row| row[column_idx]).collect()    
+    }
+
+    /// Interpolate a column into Polynomial by index
     pub fn interpolate_column(&self, domain: &[BabyBear], column_idx: usize) -> Polynomial {
         assert_eq!(
             domain.len(),
@@ -32,16 +38,16 @@ impl ExecutionTrace {
             "Domain length must match trace height"
         );
 
-        let xs = domain.to_vec();
-        let ys: Vec<BabyBear> = self.trace.iter().map(|row| row[column_idx]).collect();
+        let domain_points = domain.to_vec();
+        let values: Vec<BabyBear> = self.trace.iter().map(|row| row[column_idx]).collect();
 
         let mut poly = Polynomial::zero();
 
-        for (i, (xi, yi)) in xs.iter().zip(ys.iter()).enumerate() {
+        for (i, (xi, yi)) in domain_points.iter().zip(values.iter()).enumerate() {
             let mut numerator = Polynomial::new(vec![BabyBear::one()]);
             let mut denominator = BabyBear::one();
 
-            for (j, xj) in xs.iter().enumerate() {
+            for (j, xj) in domain_points.iter().enumerate() {
                 if i != j {
                     numerator = numerator.mul(&Polynomial::new(vec![-*xj, BabyBear::one()]));
                     denominator = denominator * (*xi - *xj);

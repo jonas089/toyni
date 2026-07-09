@@ -126,6 +126,24 @@ impl Ext {
         let order = p * p * p * p; // p^4
         self.pow_u128(order - 2)
     }
+
+    /// Evaluate a base at an extension point.
+    pub fn eval_base_at_ext(self, coeffs: &[BabyBear]) -> Self{
+        let mut acc = Self::zero();
+        for &c in coeffs.iter().rev() {
+            acc = acc * self + Self::from(c);
+        }
+        acc
+    }
+
+    /// Evaluate an extension-field-coefficient polynomial at an extension point.
+    pub fn eval_ext_at_ext(self, coeffs: &[Self]) -> Self {
+        let mut acc = Self::zero();
+        for &c in coeffs.iter().rev() {
+            acc = acc * self + c;
+        }
+        acc
+    }
 }
 
 impl From<BabyBear> for Ext {

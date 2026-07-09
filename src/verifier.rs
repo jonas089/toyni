@@ -1,10 +1,10 @@
 use crate::babybear::BabyBear;
+use crate::ext::Ext;
 use crate::math::domain::BabyBearDomain;
-use crate::math::polynomial::Polynomial;
 use crate::merkle::{verify_merkle_proof, MerkleTree};
 use crate::fibonacci::{
-    eval_boundary_1, eval_boundary_2, eval_fibonacci_constraint, MerkleOpening, StarkProof,
-    BLOWUP, COSET_SHIFT, MASK_DEGREE, NUM_QUERIES,
+    eval_boundary_1_ext, eval_boundary_2_ext, eval_fibonacci_constraint_ext, MerkleOpening,
+    MerkleOpeningExt, StarkProof, BLOWUP, COSET_SHIFT, MASK_DEGREE, NUM_QUERIES,
 };
 use crate::transcript::FiatShamirTranscript;
 
@@ -26,25 +26,25 @@ impl StarkVerifier {
         let shifted_domain = extended_domain.get_coset(shift);
         let g = domain.group_gen();
 
-        let z_poly = Polynomial::new(domain.vanishing_poly_coeffs());
+        let vanishing = domain.vanishing_poly_coeffs();
 
         // ── 1. Replay Fiat-Shamir transcript ───────────────────────────
         let mut transcript = FiatShamirTranscript::new();
         transcript.absorb_commitment(&proof.trace_commitment);
         transcript.absorb_commitment(&proof.quotient_commitment);
 
-        let z = derive_z_verifier(&mut transcript, &extended_domain, &shifted_domain);
+        let z = derive_z_verifier(&mut transcript);
 
-        transcript.absorb_field(proof.t_z);
-        transcript.absorb_field(proof.t_gz);
-        transcript.absorb_field(proof.t_ggz);
-        transcript.absorb_field(proof.q_z);
+        transcript.absorb_ext(proof.t_z);
+        transcript.absorb_ext(proof.t_gz);
+        transcript.absorb_ext(proof.t_ggz);
+        transcript.absorb_ext(proof.q_z);
 
         // ── 2. OOD constraint check: C(z) = Q(z) · Z(z) ──────────────
-        let c_z = eval_fibonacci_constraint(proof.t_ggz, proof.t_gz, proof.t_z)
-            * eval_boundary_1(z, g, trace_len)
-            * eval_boundary_2(z, g, trace_len);
-        if c_z != proof.q_z * z_poly.evaluate(z) {
+        let c_z = eval_fibonacci_constraint_ext(proof.t_ggz, proof.t_gz, proof.t_z)
+            * eval_boundary_1_ext(z, g, trace_len)
+            * eval_boundary_2_ext(z, g, trace_len);
+        if c_z != proof.q_z * z.eval_base_at_ext(&vanishing) {
             return false;
         }
 
@@ -74,17 +74,17 @@ impl StarkVerifier {
             return false;
         }
         // Final layer matches its commitment (binds all positions to the transcript).
-        if merkle_root_of(&proof.fri_final_layer) != *proof.fri_commitments.last().unwrap() {
+        if merkle_root_of_ext(&proof.fri_final_layer) != *proof.fri_commitments.last().unwrap() {
             return false;
         }
 
         transcript.absorb_commitment(&proof.fri_commitments[0]);
 
         let num_fri_folds = proof.fri_commitments.len() - 1;
-        let mut fri_betas = Vec::with_capacity(num_fri_folds);
+        let mut fri_betas: Vec<Ext> = Vec::with_capacity(num_fri_folds);
 
         for i in 1..proof.fri_commitments.len() {
-            let beta = transcript.squeeze_challenge();
+            let beta = transcript.squeeze_ext_challenge();
             fri_betas.push(beta);
             transcript.absorb_commitment(&proof.fri_commitments[i]);
         }
@@ -140,10 +140,10 @@ impl StarkVerifier {
             }
 
             // 6c. Verify Merkle proofs for DEEP layer (FRI layer 0)
-            if !verify_opening(&qp.deep_opening, &proof.fri_commitments[0]) {
+            if !verify_opening_ext(&qp.deep_opening, &proof.fri_commitments[0]) {
                 return false;
             }
-            if !verify_opening(&qp.deep_opening_pair, &proof.fri_commitments[0]) {
+            if !verify_opening_ext(&qp.deep_opening_pair, &proof.fri_commitments[0]) {
                 return false;
             }
 
@@ -151,15 +151,14 @@ impl StarkVerifier {
             //     D(x) = (Q(x)-Q(z))/(x-z) + (T(x)-T(z))/(x-z)
             //           + (T(gx)-T(gz))/(x-z) + (T(g²x)-T(g²z))/(x-z)
             //
-            //     Verify the opened DEEP value matches the reconstruction
-            //     from the opened trace and quotient values + OOD values.
+            //     x is base, z is Ext; lift the base openings into Ext.
             let x_i = shifted_elements[qi];
-            let t_x = qp.trace_opening.value;
-            let t_gx = qp.trace_opening_g.value;
-            let t_ggx = qp.trace_opening_gg.value;
-            let q_x = qp.quotient_opening.value;
+            let t_x = Ext::from(qp.trace_opening.value);
+            let t_gx = Ext::from(qp.trace_opening_g.value);
+            let t_ggx = Ext::from(qp.trace_opening_gg.value);
+            let q_x = Ext::from(qp.quotient_opening.value);
 
-            let inv_x_minus_z = (x_i - z).inverse();
+            let inv_x_minus_z = (Ext::from(x_i) - z).inverse();
             let expected_deep = (q_x - proof.q_z) * inv_x_minus_z
                 + (t_ggx - proof.t_ggz) * inv_x_minus_z
                 + (t_gx - proof.t_gz) * inv_x_minus_z
@@ -172,12 +171,12 @@ impl StarkVerifier {
             // 6e. First FRI fold: layer 0 → layer 1
             let a0 = qp.deep_opening.value;
             let b0 = qp.deep_opening_pair.value;
-            let x0 = shifted_elements[qi];
+            let x0_inv = shifted_elements[qi].inverse();
 
             let mut prev_folded = {
-                let avg = (a0 + b0) * half_inv;
-                let diff = (a0 - b0) * half_inv;
-                avg + diff * fri_betas[0] * x0.inverse()
+                let avg = (a0 + b0).mul_base(half_inv);
+                let diff = (a0 - b0).mul_base(half_inv);
+                avg + diff * fri_betas[0] * Ext::from(x0_inv)
             };
 
             // 6f. Intermediate FRI layers
@@ -194,10 +193,10 @@ impl StarkVerifier {
                 let (ref op, ref op_pair) = qp.fri_openings[layer];
 
                 // Merkle proofs
-                if !verify_opening(op, &proof.fri_commitments[fold_k]) {
+                if !verify_opening_ext(op, &proof.fri_commitments[fold_k]) {
                     return false;
                 }
-                if !verify_opening(op_pair, &proof.fri_commitments[fold_k]) {
+                if !verify_opening_ext(op_pair, &proof.fri_commitments[fold_k]) {
                     return false;
                 }
 
@@ -211,13 +210,13 @@ impl StarkVerifier {
                 }
 
                 // x-coordinate: xs_k[lo] = shifted_elements[lo]^{2^fold_k}
-                let x = shifted_elements[lo].pow(1u64 << fold_k);
+                let x_inv = shifted_elements[lo].pow(1u64 << fold_k).inverse();
 
                 let a_l = op.value;
                 let b_l = op_pair.value;
-                let avg = (a_l + b_l) * half_inv;
-                let diff = (a_l - b_l) * half_inv;
-                prev_folded = avg + diff * fri_betas[fold_k] * x.inverse();
+                let avg = (a_l + b_l).mul_base(half_inv);
+                let diff = (a_l - b_l).mul_base(half_inv);
+                prev_folded = avg + diff * fri_betas[fold_k] * Ext::from(x_inv);
 
                 pos = lo;
             }
@@ -237,30 +236,22 @@ fn verify_opening(opening: &MerkleOpening, root: &[u8]) -> bool {
     verify_merkle_proof(leaf, &opening.proof, &root.to_vec())
 }
 
-/// Merkle root of unsalted leaves; matches `build_unsalted_tree`.
-fn merkle_root_of(values: &[BabyBear]) -> Vec<u8> {
+fn verify_opening_ext(opening: &MerkleOpeningExt, root: &[u8]) -> bool {
+    verify_merkle_proof(opening.value.to_bytes().to_vec(), &opening.proof, &root.to_vec())
+}
+
+/// Merkle root of unsalted extension-field leaves; matches `build_merkle_tree_ext`.
+fn merkle_root_of_ext(values: &[Ext]) -> Vec<u8> {
     let leaves: Vec<Vec<u8>> = values.iter().map(|v| v.to_bytes().to_vec()).collect();
     MerkleTree::new(leaves).root().unwrap()
 }
 
-fn derive_z_verifier(
-    transcript: &mut FiatShamirTranscript,
-    extended_domain: &BabyBearDomain,
-    shifted_domain: &BabyBearDomain,
-) -> BabyBear {
-    let ext_set: std::collections::HashSet<BabyBear> =
-        extended_domain.elements().into_iter().collect();
-    let shift_set: std::collections::HashSet<BabyBear> =
-        shifted_domain.elements().into_iter().collect();
-    let g = extended_domain.group_gen();
-
+/// Derive the out-of-domain point in the extension field, matching the prover:
+/// reject only the (negligible) base-field case.
+fn derive_z_verifier(transcript: &mut FiatShamirTranscript) -> Ext {
     loop {
-        let z = transcript.squeeze_challenge();
-        if !ext_set.contains(&z)
-            && !shift_set.contains(&z)
-            && !shift_set.contains(&(g * z))
-            && !shift_set.contains(&(g * g * z))
-        {
+        let z = transcript.squeeze_ext_challenge();
+        if !z.is_base() {
             return z;
         }
     }
@@ -315,7 +306,7 @@ mod tests {
     fn test_verifier_rejects_bad_ood_value() {
         let mut proof = make_valid_proof();
         // Tamper with OOD trace evaluation → breaks constraint check C(z)=Q(z)*Z(z)
-        proof.t_z = proof.t_z + BabyBear::one();
+        proof.t_z = proof.t_z + Ext::one();
         let verifier = StarkVerifier;
         assert!(!verifier.verify(&proof), "Verifier should reject tampered OOD value");
     }
@@ -324,7 +315,7 @@ mod tests {
     fn test_verifier_rejects_bad_fri_final() {
         let mut proof = make_valid_proof();
         // Tamper with one final-layer value → breaks constancy + commitment + fold consistency
-        proof.fri_final_layer[0] = proof.fri_final_layer[0] + BabyBear::one();
+        proof.fri_final_layer[0] = proof.fri_final_layer[0] + Ext::one();
         let verifier = StarkVerifier;
         assert!(!verifier.verify(&proof), "Verifier should reject tampered FRI final layer");
     }
