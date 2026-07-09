@@ -2,6 +2,7 @@ use crate::babybear::BabyBear;
 use crate::ext::Ext;
 use crate::math::domain::BabyBearDomain;
 use crate::math::fri::fri_fold_ext;
+use crate::math::mask::mask_poly_base;
 use crate::merkle::{MerkleProof, MerkleTree};
 use crate::program::trace::ExecutionTrace;
 use crate::transcript::FiatShamirTranscript;
@@ -17,22 +18,6 @@ pub const COSET_SHIFT: u64 = 7;
 /// Random blinding coefficients per trace polynomial (T_hat = T + Z_H * R).
 /// Covers every revealed trace evaluation: 3 openings per query + 3 OOD points.
 pub const MASK_DEGREE: usize = 3 * NUM_QUERIES + 8;
-
-/// Blind a base-field column in place: P += Z_H * R with fresh random R.
-/// Z_H = x^n - 1, so Z_H*R = x^n*R - R (subtract R low, add it back shifted n).
-/// Z_H vanishes on the trace domain, so the masked polynomial equals the
-/// original there (constraints unchanged) but its off-domain openings are
-/// uniformly random.
-fn mask_poly_base(poly: &mut Vec<BabyBear>, n: usize, rng: &mut impl rand::Rng) {
-    let r: Vec<BabyBear> = (0..MASK_DEGREE).map(|_| BabyBear::random(rng)).collect();
-    if poly.len() < n + MASK_DEGREE {
-        poly.resize(n + MASK_DEGREE, BabyBear::zero());
-    }
-    for i in 0..MASK_DEGREE {
-        poly[i] = poly[i] - r[i];
-        poly[n + i] = poly[n + i] + r[i];
-    }
-}
 
 // ── proof data structures ──────────────────────────────────────────────
 
@@ -142,7 +127,7 @@ impl StarkProver {
         // evaluate over the shifted LDE coset (fft).
         let column = self.trace.get_column(0);
         let mut trace_poly = domain.ifft(&column);
-        mask_poly_base(&mut trace_poly, trace_len, &mut rng);
+        mask_poly_base(&mut trace_poly, trace_len, MASK_DEGREE, &mut rng);
         let trace_lde = shifted_domain.fft(&trace_poly);
 
         let trace_tree = build_merkle_tree(&trace_lde, &mut rng);
