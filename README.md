@@ -33,8 +33,10 @@ forward to exploring binary field STARKs later in my career.
 
 ## The Fibonacci example
 
-Toyni ships with a small Fibonacci AIR that proves correct evaluation of
-the recurrence over a power-of-two trace length:
+The bundled Fibonacci AIR is a minimal illustration of the two STARK
+constraint kinds: a *transition* constraint (each term is the sum of the
+previous two) and *boundary* constraints. It is a teaching example, not a
+general proof system. The trace is a single column over a power-of-two length:
 
 ```
 | var |
@@ -47,7 +49,7 @@ the recurrence over a power-of-two trace length:
 | 21  |
 ```
 
-The constraint reduces to:
+The transition constraint reduces to:
 
 ```rust
 fn fibonacci_constraint(t2: BabyBear, t1: BabyBear, t0: BabyBear) -> BabyBear {
@@ -60,6 +62,14 @@ Run it with:
 ```bash
 cargo test test_fibonacci -- --nocapture
 ```
+
+Toyni itself is the **polynomial / STARK toolkit** underneath: domains, NTT,
+FRI, Merkle, Fiat-Shamir, and field/polynomial arithmetic. It is a library of
+building blocks, not a production proof system. For a fully-constrained system
+that proves real **machine-code execution** (a custom ISA and AIR, with the
+extension-field challenges and soundness hardening a real proof needs), see
+[toyni-zkvm](https://github.com/jonas089/toyni-zkvm), which builds on these
+primitives.
 
 ## CUDA NTT acceleration (`cuda` feature)
 
@@ -96,7 +106,7 @@ and Merkle commitments:
 2. **Low-Degree Testing.** FRI folds the DEEP composition a *fixed* number of
    rounds down to a degree-bound layer, and the verifier reads that whole final
    layer and checks it is a constant (low-degree) codeword. **That final-layer
-   check is what enforces the degree bound** — folding all the way to a single
+   check is what enforces the degree bound**; folding all the way to a single
    value and checking only that scalar enforces nothing and is forgeable.
 3. **Merkle Commitments.** Each layer is committed via a Merkle tree; leaves are
    domain-separated, and the hiding (witness-carrying) trees are also salted.
