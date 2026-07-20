@@ -72,6 +72,11 @@ pub trait Field:
     /// Reduce a `u64` into the field (used for AIR constants).
     fn from_u64(v: u64) -> Self;
 
+    /// The canonical integer representative in `[0, characteristic)`. For
+    /// extension fields this is the constant coefficient's representative
+    /// (meaningful only for the base fields, used by field-native VMs).
+    fn to_canonical_u64(self) -> u64;
+
     fn is_zero(self) -> bool {
         self == Self::ZERO
     }
@@ -156,6 +161,10 @@ impl Field for BabyBear {
         BabyBear::new(v)
     }
     #[inline]
+    fn to_canonical_u64(self) -> u64 {
+        self.value
+    }
+    #[inline]
     fn is_zero(self) -> bool {
         self.value == 0
     }
@@ -198,6 +207,10 @@ impl Field for BabyBearExt {
     #[inline]
     fn from_u64(v: u64) -> Self {
         BabyBearExt::from(BabyBear::new(v))
+    }
+    #[inline]
+    fn to_canonical_u64(self) -> u64 {
+        self.c[0].value
     }
     #[inline]
     fn is_zero(self) -> bool {
@@ -249,6 +262,10 @@ impl Field for M31 {
         M31::from_u64(v)
     }
     #[inline]
+    fn to_canonical_u64(self) -> u64 {
+        self.0 as u64
+    }
+    #[inline]
     fn is_zero(self) -> bool {
         M31::is_zero(self)
     }
@@ -283,6 +300,10 @@ impl Field for QM31 {
     #[inline]
     fn from_u64(v: u64) -> Self {
         QM31::from_base(M31::from_u64(v))
+    }
+    #[inline]
+    fn to_canonical_u64(self) -> u64 {
+        self.a.a.0 as u64
     }
     #[inline]
     fn is_zero(self) -> bool {
