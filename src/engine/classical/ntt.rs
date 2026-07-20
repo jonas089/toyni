@@ -6,7 +6,7 @@
 // `CudaBuffer`) is re-exported flat at this module's level so callers can stay
 // agnostic.
 
-use crate::babybear::BabyBear;
+use crate::field::babybear::BabyBear;
 
 // ── CPU NTT (always available) ──────────────────────────────────────────────
 

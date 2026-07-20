@@ -1,13 +1,14 @@
 // BabyBear field implementation
 // Prime: p = 2^31 - 2^27 + 1 = 2013265921
 // Ported from joda for use in toyni's STARK prover
+#![allow(clippy::assign_op_pattern)]
 
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub const BABYBEAR_PRIME: u64 = 2013265921; // 2^31 - 2^27 + 1
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(C)]
 pub struct BabyBear {
     pub value: u64,

@@ -1,190 +1,183 @@
+//! SHA-256 Merkle tree commitments with domain separation and optional
+//! per-leaf salts (for zero-knowledge hiding of committed evaluations).
+//!
+//! Leaf hashes are tagged `0x00` and internal nodes `0x01`, so a node hash
+//! can never be presented as a leaf or vice versa. Leaf counts are always
+//! powers of two in this library, so the tree is perfect.
+
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone)]
-pub struct MerkleProof {
-    pub path: Vec<Vec<u8>>,
-    pub position: Vec<bool>,
-}
+pub type Hash = [u8; 32];
 
-#[derive(Debug)]
-pub struct MerkleTree {
-    pub leaves: Vec<Vec<u8>>,
-    pub levels: Vec<Vec<Vec<u8>>>,
-}
-
-impl MerkleTree {
-    pub fn new(leaves: Vec<Vec<u8>>) -> Self {
-        let mut tree = MerkleTree {
-            leaves: leaves.clone(),
-            levels: Vec::new(),
-        };
-        tree.build_tree();
-        tree
-    }
-
-    pub fn build_tree(&mut self) {
-        // Leaf level is the domain-separated hash of each supplied leaf. This
-        // both hashes raw (e.g. unhashed field-element) leaves and tags them so
-        // a leaf can never be reinterpreted as an internal node (see hash_leaf /
-        // hash_node).
-        let mut current_level: Vec<Vec<u8>> =
-            self.leaves.iter().map(|leaf| hash_leaf(leaf)).collect();
-        self.levels.push(current_level.clone());
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-            for i in (0..current_level.len()).step_by(2) {
-                let left = current_level.get(i).unwrap();
-                let right = if i + 1 < current_level.len() {
-                    current_level.get(i + 1).unwrap()
-                } else {
-                    current_level.get(i).unwrap() // Duplicate last node if odd number
-                };
-                next_level.push(hash_node(left, right));
-            }
-            current_level = next_level;
-            self.levels.push(current_level.clone());
-        }
-    }
-
-    pub fn get_proof(&self, index: usize) -> Option<MerkleProof> {
-        if index >= self.leaves.len() {
-            return None;
-        }
-
-        let mut path = Vec::new();
-        let mut position = Vec::new();
-        let mut current_index = index;
-
-        // Start from the leaf level
-        for level in &self.levels[..self.levels.len() - 1] {
-            let sibling_index = if current_index % 2 == 0 {
-                current_index + 1
-            } else {
-                current_index - 1
-            };
-
-            // If we're at the last node in an odd-sized level, use the node itself as sibling
-            if sibling_index >= level.len() {
-                path.push(level.get(current_index).unwrap().clone());
-                position.push(true); // Treat as if sibling is on the right
-            } else {
-                path.push(level.get(sibling_index).unwrap().clone());
-                position.push(current_index % 2 == 1);
-            }
-
-            current_index /= 2;
-        }
-
-        Some(MerkleProof { path, position })
-    }
-
-    pub fn root(&self) -> Option<Vec<u8>> {
-        self.levels.last().unwrap().first().cloned().to_owned()
-    }
-}
-
-pub fn verify_merkle_proof(leaf: Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
-    // Mirror build_tree: the supplied leaf is first domain-separated as a leaf,
-    // then combined upward as internal nodes.
-    let mut current_hash = hash_leaf(&leaf);
-
-    for (sibling, is_right) in proof.path.iter().zip(proof.position.iter()) {
-        current_hash = if *is_right {
-            hash_node(sibling, &current_hash)
-        } else {
-            hash_node(&current_hash, sibling)
-        };
-    }
-
-    current_hash == *root
-}
-
-/// Domain-separation tags keep the leaf and internal-node hash spaces disjoint,
-/// so an internal node hash can never be presented as a leaf (or vice versa).
 const LEAF_TAG: u8 = 0x00;
 const NODE_TAG: u8 = 0x01;
 
-/// Hash a leaf: `SHA256(0x00 || leaf)`.
-fn hash_leaf(data: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update([LEAF_TAG]);
-    hasher.update(data);
-    hasher.finalize().to_vec()
+pub fn hash_leaf(data: &[u8]) -> Hash {
+    let mut h = Sha256::new();
+    h.update([LEAF_TAG]);
+    h.update(data);
+    h.finalize().into()
 }
 
-/// Hash an internal node: `SHA256(0x01 || left || right)`.
-fn hash_node(left: &[u8], right: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update([NODE_TAG]);
-    hasher.update(left);
-    hasher.update(right);
-    hasher.finalize().to_vec()
+pub fn hash_node(left: &Hash, right: &Hash) -> Hash {
+    let mut h = Sha256::new();
+    h.update([NODE_TAG]);
+    h.update(left);
+    h.update(right);
+    h.finalize().into()
+}
+
+/// A perfect binary Merkle tree over pre-serialized leaves.
+#[derive(Debug, Clone)]
+pub struct MerkleTree {
+    /// `levels[0]` = leaf hashes, `levels.last()` = `[root]`.
+    pub levels: Vec<Vec<Hash>>,
+}
+
+impl MerkleTree {
+    pub fn new(leaves: &[Vec<u8>]) -> Self {
+        assert!(leaves.len().is_power_of_two(), "leaf count must be a power of two");
+        let leaf_hashes: Vec<Hash> = hash_leaves(leaves);
+        Self::from_leaf_hashes(leaf_hashes)
+    }
+
+    /// Build from a packed buffer of `count` fixed-size leaves.
+    pub fn from_packed(packed: &[u8], leaf_len: usize) -> Self {
+        assert_eq!(packed.len() % leaf_len, 0);
+        let count = packed.len() / leaf_len;
+        assert!(count.is_power_of_two(), "leaf count must be a power of two");
+        let leaf_hashes: Vec<Hash> = {
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                if count >= 1 << 12 {
+                    packed.par_chunks(leaf_len).map(hash_leaf).collect()
+                } else {
+                    packed.chunks(leaf_len).map(hash_leaf).collect()
+                }
+            }
+            #[cfg(not(feature = "parallel"))]
+            packed.chunks(leaf_len).map(hash_leaf).collect()
+        };
+        Self::from_leaf_hashes(leaf_hashes)
+    }
+
+    pub fn from_leaf_hashes(leaf_hashes: Vec<Hash>) -> Self {
+        assert!(leaf_hashes.len().is_power_of_two());
+        let mut levels = vec![leaf_hashes];
+        while levels.last().unwrap().len() > 1 {
+            let prev = levels.last().unwrap();
+            let next: Vec<Hash> = build_level(prev);
+            levels.push(next);
+        }
+        Self { levels }
+    }
+
+    pub fn root(&self) -> Hash {
+        self.levels.last().unwrap()[0]
+    }
+
+    pub fn leaf_count(&self) -> usize {
+        self.levels[0].len()
+    }
+
+    /// Authentication path for a leaf: sibling hashes bottom-up. The side of
+    /// each sibling is implied by the bits of `index`.
+    pub fn prove(&self, index: usize) -> Vec<Hash> {
+        assert!(index < self.leaf_count());
+        let mut path = Vec::with_capacity(self.levels.len() - 1);
+        let mut i = index;
+        for level in &self.levels[..self.levels.len() - 1] {
+            path.push(level[i ^ 1]);
+            i >>= 1;
+        }
+        path
+    }
+}
+
+fn hash_leaves(leaves: &[Vec<u8>]) -> Vec<Hash> {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        if leaves.len() >= 1 << 12 {
+            return leaves.par_iter().map(|l| hash_leaf(l)).collect();
+        }
+    }
+    leaves.iter().map(|l| hash_leaf(l)).collect()
+}
+
+fn build_level(prev: &[Hash]) -> Vec<Hash> {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        if prev.len() >= 1 << 12 {
+            return prev
+                .par_chunks(2)
+                .map(|pair| hash_node(&pair[0], &pair[1]))
+                .collect();
+        }
+    }
+    prev.chunks(2).map(|pair| hash_node(&pair[0], &pair[1])).collect()
+}
+
+/// Verify an authentication path produced by [`MerkleTree::prove`].
+pub fn verify_path(root: &Hash, index: usize, leaf_data: &[u8], path: &[Hash]) -> bool {
+    if index >= (1usize << path.len()) {
+        return false;
+    }
+    let mut hash = hash_leaf(leaf_data);
+    let mut i = index;
+    for sibling in path {
+        hash = if i & 1 == 0 {
+            hash_node(&hash, sibling)
+        } else {
+            hash_node(sibling, &hash)
+        };
+        i >>= 1;
+    }
+    hash == *root
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn leaf(n: u64) -> Vec<u8> {
-        n.to_le_bytes().to_vec()
+    fn leaves(n: usize) -> Vec<Vec<u8>> {
+        (0..n as u64).map(|i| i.to_le_bytes().to_vec()).collect()
     }
 
     #[test]
-    fn test_merkle_proof_verification() {
-        let leaves: Vec<Vec<u8>> = (1..=4).map(leaf).collect();
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        for i in 0..4 {
-            let proof = tree.get_proof(i).unwrap();
-            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
+    fn prove_verify_all_positions() {
+        for n in [1usize, 2, 8, 64] {
+            let ls = leaves(n);
+            let tree = MerkleTree::new(&ls);
+            let root = tree.root();
+            for (i, leaf) in ls.iter().enumerate() {
+                let path = tree.prove(i);
+                assert!(verify_path(&root, i, leaf, &path));
+                // Wrong leaf fails.
+                assert!(!verify_path(&root, i, b"junk", &path));
+                // Wrong index fails.
+                if n > 1 {
+                    assert!(!verify_path(&root, i ^ 1, leaf, &path));
+                }
+            }
         }
     }
 
     #[test]
-    fn test_merkle_proof_odd_leaves() {
-        let leaves: Vec<Vec<u8>> = (1..=3).map(leaf).collect();
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        for i in 0..3 {
-            let proof = tree.get_proof(i).unwrap();
-            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
-        }
+    fn leaf_node_domain_separation() {
+        let ls = leaves(2);
+        let tree = MerkleTree::new(&ls);
+        let root = tree.root();
+        // Presenting the root as a single leaf yields a different commitment.
+        let masquerade = MerkleTree::new(&[root.to_vec()]);
+        assert_ne!(masquerade.root(), root);
     }
 
     #[test]
-    fn test_merkle_proof_single_leaf() {
-        let leaves = vec![leaf(1)];
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        let proof = tree.get_proof(0).unwrap();
-        assert!(verify_merkle_proof(leaves[0].clone(), &proof, &root));
-    }
-
-    #[test]
-    fn test_wrong_leaf_rejected() {
-        let leaves: Vec<Vec<u8>> = (1..=4).map(leaf).collect();
-        let tree = MerkleTree::new(leaves);
-        let root = tree.root().unwrap();
-
-        let proof = tree.get_proof(0).unwrap();
-        // A different leaf value at position 0 must not verify.
-        assert!(!verify_merkle_proof(leaf(99), &proof, &root));
-    }
-
-    #[test]
-    fn test_leaf_node_domain_separation() {
-        // A two-leaf root is hash_node(hash_leaf(a), hash_leaf(b)). Because
-        // leaves are tagged 0x00 and nodes 0x01, that node hash cannot be
-        // reinterpreted as a leaf: committing to it as a single leaf yields a
-        // different root, so an internal node can never masquerade as a leaf.
-        let tree = MerkleTree::new(vec![leaf(1), leaf(2)]);
-        let node_root = tree.root().unwrap();
-
-        let masquerade = MerkleTree::new(vec![node_root.clone()]);
-        assert_ne!(masquerade.root().unwrap(), node_root);
+    #[should_panic]
+    fn non_power_of_two_rejected() {
+        MerkleTree::new(&leaves(3));
     }
 }

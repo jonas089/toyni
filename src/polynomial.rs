@@ -1,6 +1,7 @@
+#![allow(clippy::manual_memcpy, clippy::needless_range_loop)]
 //! Basic polynomial operations over BabyBear field.
 
-use crate::babybear::BabyBear;
+use crate::field::babybear::BabyBear;
 use std::fmt;
 
 #[derive(Debug, Clone)]
