@@ -1,142 +1,118 @@
-# Toyni: A STARK Implementation in Progress
+# toyni
+
+A modular STARK library with **two proving engines behind one generic
+frontend**: the classical roots-of-unity STARK over BabyBear, and a circle
+STARK over Mersenne-31. The same AIR definition, example programs, Merkle
+commitments and Fiat–Shamir transcript run on either engine unchanged.
 
 > [!CAUTION]
-> **This is a research project.** It has **not** been audited and is not
-> suitable for production use. Do not rely on it for any setting where a
-> broken proof would have real-world consequences.
+> Research code. Not audited; do not use where a broken proof would have
+> real-world consequences.
 
-## Status
-
-**The Toyni STARK toolkit is in a solid state.** The core proof system
-(domain construction, NTT-based FFT/IFFT, FRI low-degree testing, Merkle
-commitment, Fiat-Shamir transcript, BabyBear field arithmetic) is
-implemented end-to-end and exercised by the bundled Fibonacci AIR
-(`src/fibonacci.rs` + `src/verifier.rs`). FRI enforces its degree bound via a
-final-layer constancy check, and the Fibonacci prover is zero-knowledge
-(trace blinding + salted Merkle leaves). The unit-test suite passes, and the
-same primitives back the [zkvm](https://github.com/jonas089/zkvm) project.
-
-What is **not** in scope for Toyni: the AIR for any non-trivial program.
-Toyni provides the building blocks; consumers (like zkvm) define their own
-constraint systems on top.
-
-## Learning
-
-This implementation goes hand-in-hand with my article on STARKs that you
-can read [here](https://github.com/jonas089/articles/blob/master/02-starks.md).
-Toyni relies on prime fields and DEEP-ALI for soundness. I am looking
-forward to exploring binary field STARKs later in my career.
-
-![toyniii](art/toyniii.jpg)
-
-*Meet the amazing artist behind this creation, [Kristiana Skrastina](https://www.linkedin.com/in/kristiana-skrastina/)*
-
-## The Fibonacci example
-
-The bundled Fibonacci AIR is a minimal illustration of the two STARK
-constraint kinds: a *transition* constraint (each term is the sum of the
-previous two) and *boundary* constraints. It is a teaching example, not a
-general proof system. The trace is a single column over a power-of-two length:
+## Two engines, one architecture
 
 ```
-| var |
-|-----|
-|  1  |
-|  1  |
-|  2  |
-| ... |
-| 13  |
-| 21  |
+                    ┌───────────────────────────────────────────┐
+   your program ───►│  Air<B>  (transition + boundary, degree ≤2)│
+                    │  TraceTable<B>   — generic over base field │
+                    └───────────────────┬───────────────────────┘
+                                        │  StarkProver / StarkVerifier
+                          ┌─────────────┴──────────────┐
+                          ▼                            ▼
+              ┌───────────────────────┐   ┌──────────────────────────┐
+   Engine ──► │  ClassicalEngine      │   │  CircleEngine  (feature)  │
+   trait      │  BabyBear (2^31−2^27+1)│   │  M31 (2^31−1)             │
+              │  NTT · coset domains  │   │  circle FFT · twin-cosets │
+              │  2-adic FRI           │   │  circle FRI (λ-decomp)    │
+              └───────────────────────┘   │  optional Metal GPU       │
+                          │                └──────────────────────────┘
+                          └────────► shared: field traits, Merkle (SHA-256),
+                                     transcript, DEEP-ALI prover/verifier
 ```
 
-The transition constraint reduces to:
+Everything that differs between roots-of-unity and circle geometry — domain
+points, FFT, vanishing polynomials, single-point quotient denominators, the
+out-of-domain point type, and the FRI fold — lives behind the [`Engine`]
+trait (`src/engine/mod.rs`). Both engines realize the same DEEP-ALI protocol:
+commit the trace, commit the constraint composition, sample out-of-domain,
+batch single-point DEEP quotients, FRI to a constant final layer.
 
 ```rust
-fn fibonacci_constraint(t2: BabyBear, t1: BabyBear, t0: BabyBear) -> BabyBear {
-    t2 - (t1 + t0)
-}
+use toyni::{examples::FibonacciAir, ClassicalEngine, ProofOptions,
+            StarkProver, StarkVerifier};
+use toyni::field::BabyBear;
+
+let (air, trace) = FibonacciAir::<BabyBear>::with_trace(16);
+let o = ProofOptions::default();
+let proof = StarkProver::<ClassicalEngine, _>::new(&air, o).prove(&trace);
+assert!(StarkVerifier::<ClassicalEngine, _>::new(&air, o).verify(&proof));
 ```
 
-Run it with:
+Swap `ClassicalEngine` → `CircleEngine` and `BabyBear` → `M31` to run the same
+AIR on the circle engine (with `--features circle`). The example AIRs
+(`FibonacciAir`, `RangeCheckAir`, `HashChainAir`) are generic over the base
+field and run on both.
 
-```bash
-cargo test test_fibonacci -- --nocapture
+## Layout
+
+```
+src/
+  field/        Field / ExtField / ConstraintField traits + both towers:
+                babybear, babybear_ext | m31, cm31, qm31  (circle feature)
+  air.rs        Air trait, TraceTable, Boundary  (the generic frontend)
+  merkle.rs     tagged SHA-256 Merkle (shared)
+  transcript.rs Fiat–Shamir byte sponge (shared)
+  proof.rs      ProofOptions, StarkProof<E>
+  prover.rs     generic DEEP-ALI prover over any Engine
+  verifier.rs   generic verifier
+  engine/
+    mod.rs      the Engine trait + Mode
+    classical/  ClassicalEngine: ntt, coset domains, 2-adic FRI
+    circle/     CircleEngine: geometry, cfft, circle FRI, backend, metal
+  examples/     fibonacci, range_check, hash_chain  (generic over B)
 ```
 
-Toyni itself is the **polynomial / STARK toolkit** underneath: domains, NTT,
-FRI, Merkle, Fiat-Shamir, and field/polynomial arithmetic. It is a library of
-building blocks, not a production proof system. For a fully-constrained system
-that proves real **machine-code execution** (a custom ISA and AIR, with the
-extension-field challenges and soundness hardening a real proof needs), see
-[toyni-zkvm](https://github.com/jonas089/toyni-zkvm), which builds on these
-primitives.
+## Features
 
-## CUDA NTT acceleration (`cuda` feature)
+| feature | effect |
+|---------|--------|
+| `parallel` (default) | rayon-parallel FFT / Merkle / composition |
+| `circle` | compile the circle engine + M31 field tower |
+| `metal` | circle engine's Metal GPU backend (implies `circle`) |
+| `cuda` | classical NTT on CUDA (existing) |
 
-Toyni includes an optional CUDA backend for the NTT (forward + inverse).
-It's gated behind the `cuda` feature flag and falls back to the CPU path
-when the feature is off or no GPU is detected at runtime. The kernel and
-its FFI live in [`cuda/ntt_kernel.cu`](cuda/ntt_kernel.cu) and
-[`src/ntt.rs`](src/ntt.rs); `build.rs` invokes `nvcc` only when the
-feature is enabled.
+## Benchmarks: roots-of-unity vs circle
 
-The path is tuned for repeated NTTs of the same size, the typical
-proving workload. Per `n` it caches forward + inverse twiddles plus a
-reusable device buffer in a global context, eliminating per-call
-`cudaMalloc` / `cudaFree`, host-side twiddle precomputation, and per-stage
-H2D copies. Mul reduction inside butterflies uses Barrett with
-`mu = floor(2^64 / p)`. The build emits native code for sm_75/86/89 and,
-when the toolkit supports it, sm_120 for Blackwell GPUs (RTX 50xx); a
-forward-compat PTX target is always emitted as a fallback.
+Same AIR, same protocol parameters (rate `2^-3`, 44 queries, zero-knowledge),
+same generic prover — only the engine differs. Apple M3 Max, multicore CPU:
 
-Build and test the CUDA path with:
+| workload | roots-of-unity prove | circle prove | speed-up | verify (RoU / circle) |
+|----------|---------------------:|-------------:|---------:|----------------------:|
+| Fibonacci 2^12       | 84 ms  | 75 ms  | 1.1× | 5.1 / 4.1 ms |
+| Fibonacci 2^14       | 318 ms | 266 ms | 1.2× | 7.0 / 5.4 ms |
+| Fibonacci 2^16       | 1.28 s | 1.04 s | 1.2× | 12 / 7.3 ms |
+| hash-chain 2^12 × 24 | 510 ms | 255 ms | **2.0×** | 5.2 / 4.4 ms |
+| hash-chain 2^14 × 24 | 2.17 s | 965 ms | **2.2×** | 7.1 / 5.5 ms |
 
-```bash
-cargo test --features cuda --release
-```
+Circle wins on the wide multi-column workload where M31's faster arithmetic
+(shift-and-add reduction vs BabyBear's multiply-reduce) and the halved FRI
+blowup dominate. The circle engine additionally has a Metal GPU backend
+(`--features metal`) that is bit-identical to the CPU path and gives a further
+~3× on large traces (see `src/engine/circle/metal`).
 
-## Theory: security properties
+Reproduce: `cargo run --release --features circle --example bench`.
 
-STARKs achieve their security through domain extension, low-degree testing,
-and Merkle commitments:
+## Tests
 
-1. **Domain Extension (Blowup).** The trace is extended to a domain `b`× larger
-   than the trace length (here `b = 32`, sized to absorb the zero-knowledge
-   masking below).
-2. **Low-Degree Testing.** FRI folds the DEEP composition a *fixed* number of
-   rounds down to a degree-bound layer, and the verifier reads that whole final
-   layer and checks it is a constant (low-degree) codeword. **That final-layer
-   check is what enforces the degree bound**; folding all the way to a single
-   value and checking only that scalar enforces nothing and is forgeable.
-3. **Merkle Commitments.** Each layer is committed via a Merkle tree; leaves are
-   domain-separated, and the hiding (witness-carrying) trees are also salted.
+`cargo test --features circle` — 67 library unit tests + 12 end-to-end tests
+that prove/verify every example AIR on **both** engines, including tamper
+rejection (mutating any commitment, opening, OOD value, or FRI layer is
+rejected). Clippy clean on every feature combination.
 
-The soundness error is roughly `ρ^q`, where `ρ` is the tested Reed–Solomon rate
-and `q` the number of queries. The masked composition is tested at rate `1/8`
-(degree bound `4·trace_len` over a `32·trace_len` domain), so 44 queries give
-`~(1/8)^44 ≈ 2^-132`.
+## Used by
 
-### Zero-knowledge
-
-The trace polynomial is blinded as `T̂ = T + Z_H·R` with `R` uniformly random.
-Because `Z_H` vanishes on the trace domain, `T̂ = T` there (constraints, and thus
-soundness and completeness, are unchanged), but off it the LDE / query / OOD
-openings are uniformly random. Together with per-leaf Merkle salting, the
-verifier's view reveals nothing about the witness.
-
-## Associated With
-
-<div align="center">
-
-| <a href="https://ciphercurve.com"><img src="https://ciphercurve.com/logo02.png" width="200" height="50" alt="Ciphercurve"></a> |
-|:---:|
-| [Ciphercurve](https://ciphercurve.com) |
-
-</div>
-
----
-
-<div align="center">
-  <h3>2025 Ciphercurve</h3>
-  <p><em>Building the future of privacy-preserving computation</em></p>
-</div>
+[toyni-zkvm](https://github.com/jonas089/toyni-zkvm) builds a field-native
+RISC-style zkVM on toyni's primitives (LogUp memory/register consistency,
+grand-product permutation arguments). It runs on the roots-of-unity engine;
+the unified engine architecture here is what makes a circle-engine zkVM a
+drop-in change of the geometry layer rather than a rewrite.
