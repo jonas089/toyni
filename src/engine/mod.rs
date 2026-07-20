@@ -92,6 +92,30 @@ pub trait Engine: Sized + 'static {
     /// Evaluate a base-coefficient polynomial at an out-of-domain point.
     fn eval_at_ood(coeffs: &[Self::Base], ood: Self::Ood) -> Self::Ext;
 
+    // Extension-field transforms (for auxiliary columns such as the zkVM's
+    // permutation / lookup accumulators, which are committed over `Ext`).
+    /// FFT-order extension values → basis coefficients, in place.
+    fn interpolate_ext(values: &mut [Self::Ext], t: &Self::Transform);
+    /// Extension coefficients → LDE values over the evaluation domain.
+    fn evaluate_lde_ext(
+        coeffs: &[Self::Ext],
+        log_from: u32,
+        log_eval: u32,
+        t_eval: &Self::Transform,
+    ) -> Vec<Self::Ext>;
+    /// Evaluate an extension-coefficient polynomial at an out-of-domain point.
+    fn eval_ext_at_ood(coeffs: &[Self::Ext], ood: Self::Ood) -> Self::Ext;
+
+    /// Forward single-point vanishing function of a trace point, over the
+    /// evaluation domain (a numerator factor for single-row exclusion). It is
+    /// the reciprocal of [`Engine::boundary_denom_inv_over_eval`].
+    fn point_vanishing_over_eval(
+        trace_point: Self::Point,
+        points: &[Self::Point],
+    ) -> Vec<Self::Ext>;
+    /// Forward single-point vanishing of a trace point at an out-of-domain point.
+    fn point_vanishing_at_ood(trace_point: Self::Point, ood: Self::Ood) -> Self::Ext;
+
     // ── domain geometry ────────────────────────────────────────────────
     fn eval_points(log_eval: u32) -> Vec<Self::Point>;
     /// Position of trace row `row` in the interpolation (FFT) ordering.

@@ -89,6 +89,28 @@ impl Engine for CircleEngine {
         eval_at_point(coeffs, ood)
     }
 
+    fn interpolate_ext(values: &mut [QM31], t: &Twiddles) {
+        cfft::interpolate(values, t);
+    }
+    fn evaluate_lde_ext(coeffs: &[QM31], log_from: u32, log_eval: u32, t_eval: &Twiddles) -> Vec<QM31> {
+        let mut lde = embed_coeffs(coeffs, log_from, log_eval);
+        cfft::evaluate(&mut lde, t_eval);
+        lde
+    }
+    fn eval_ext_at_ood(coeffs: &[QM31], ood: CirclePoint<QM31>) -> QM31 {
+        eval_at_point(coeffs, ood)
+    }
+    fn point_vanishing_over_eval(
+        trace_point: CirclePoint<M31>,
+        points: &[CirclePoint<M31>],
+    ) -> Vec<QM31> {
+        let z = trace_point.into_qm31();
+        points.iter().map(|&p| point_vanishing_eval(z, p.into_qm31())).collect()
+    }
+    fn point_vanishing_at_ood(trace_point: CirclePoint<M31>, ood: CirclePoint<QM31>) -> QM31 {
+        point_vanishing_eval(trace_point.into_qm31(), ood)
+    }
+
     fn eval_points(log_eval: u32) -> Vec<CirclePoint<M31>> {
         CircleDomain::standard(log_eval).points()
     }

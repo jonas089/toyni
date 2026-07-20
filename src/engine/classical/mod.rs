@@ -91,6 +91,27 @@ impl Engine for ClassicalEngine {
         ood.eval_base_poly(coeffs)
     }
 
+    fn interpolate_ext(values: &mut [Ext], t: &Transform) {
+        let d = BabyBearDomain::new(1usize << t.log_size);
+        let coeffs = d.ifft_ext(values);
+        values.copy_from_slice(&coeffs);
+    }
+    fn evaluate_lde_ext(coeffs: &[Ext], _log_from: u32, log_eval: u32, _t: &Transform) -> Vec<Ext> {
+        let coset = BabyBearDomain::new(1usize << log_eval).get_coset(BabyBear::new(COSET_SHIFT));
+        let mut padded = coeffs.to_vec();
+        padded.resize(1usize << log_eval, Ext::ZERO);
+        coset.fft_ext(&padded)
+    }
+    fn eval_ext_at_ood(coeffs: &[Ext], ood: Ext) -> Ext {
+        ood.eval_ext_poly(coeffs)
+    }
+    fn point_vanishing_over_eval(trace_point: BabyBear, points: &[BabyBear]) -> Vec<Ext> {
+        points.iter().map(|&x| Ext::from(x - trace_point)).collect()
+    }
+    fn point_vanishing_at_ood(trace_point: BabyBear, ood: Ext) -> Ext {
+        ood - Ext::from(trace_point)
+    }
+
     fn eval_points(log_eval: u32) -> Vec<BabyBear> {
         coset_elements(log_eval)
     }
