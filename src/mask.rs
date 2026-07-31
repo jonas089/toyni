@@ -7,8 +7,8 @@
 //! Because `Z_H * R = x^n * R - R`, this subtracts `R` into the low
 //! coefficients and adds it back shifted by `n`.
 
-use crate::babybear::BabyBear;
-use crate::ext::Ext;
+use crate::field::babybear::BabyBear;
+use crate::field::babybear_ext::Ext;
 use rand::Rng;
 
 /// Blind a base-field column polynomial in place.

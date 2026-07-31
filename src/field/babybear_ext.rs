@@ -14,12 +14,12 @@
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::babybear::{BabyBear, BABYBEAR_PRIME};
+use crate::field::babybear::{BabyBear, BABYBEAR_PRIME};
 
 /// The binomial constant: `X^4 = W`.
 const W: u64 = 11;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(C)]
 pub struct Ext {
     pub c: [BabyBear; 4],

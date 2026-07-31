@@ -1,9 +1,10 @@
+#![allow(clippy::needless_range_loop)]
 // BabyBear evaluation domain with NTT-based FFT/IFFT
 // Replaces Arkworks GeneralEvaluationDomain
 
-use crate::babybear::BabyBear;
-use crate::ext::Ext;
-use crate::ntt;
+use crate::field::babybear::BabyBear;
+use crate::field::babybear_ext::Ext;
+use crate::engine::classical::ntt;
 
 /// Evaluation domain over BabyBear field, supporting standard and coset domains.
 #[derive(Debug, Clone)]
@@ -89,8 +90,8 @@ impl BabyBearDomain {
         // NTT/INTT (GPU or CPU)
         #[cfg(feature = "cuda")]
         if self.use_gpu {
-            if crate::ntt::cuda_available() {
-                crate::ntt::intt_cuda(&mut values).expect("CUDA INTT failed");
+            if crate::engine::classical::ntt::cuda_available() {
+                crate::engine::classical::ntt::intt_cuda(&mut values).expect("CUDA INTT failed");
                 self.undo_coset_shift(&mut values);
                 return values;
             }
@@ -112,8 +113,8 @@ impl BabyBearDomain {
 
         #[cfg(feature = "cuda")]
         if self.use_gpu {
-            if crate::ntt::cuda_available() {
-                crate::ntt::ntt_cuda(&mut values).expect("CUDA NTT failed");
+            if crate::engine::classical::ntt::cuda_available() {
+                crate::engine::classical::ntt::ntt_cuda(&mut values).expect("CUDA NTT failed");
                 return values;
             }
         }
@@ -174,6 +175,18 @@ impl BabyBearDomain {
     }
 }
 
+/// Coset shift used for the LDE / FRI evaluation domain (disjoint from the
+/// multiplicative trace subgroup, whose shift is 1).
+pub const COSET_SHIFT: u64 = 7;
+
+/// The evaluation coset `{7 * omega^i}` of size `2^log_size`, in index order.
+pub fn coset_elements(log_size: u32) -> Vec<BabyBear> {
+    let size = 1usize << log_size;
+    BabyBearDomain::new(size)
+        .get_coset(BabyBear::new(COSET_SHIFT))
+        .elements()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_coset_evaluations_correct() {
-        use crate::math::polynomial::Polynomial;
+        use crate::polynomial::Polynomial;
 
         let domain = BabyBearDomain::new(8);
         let coset = domain.get_coset(BabyBear::new(7));
@@ -243,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_ext_fft_ifft_roundtrip() {
-        use crate::ext::Ext;
+        use crate::field::babybear_ext::Ext;
         let domain = BabyBearDomain::new(8);
         let coeffs: Vec<Ext> = (0..8)
             .map(|i| Ext::new([
@@ -258,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_ext_fft_evaluates_correctly() {
-        use crate::ext::Ext;
+        use crate::field::babybear_ext::Ext;
         let domain = BabyBearDomain::new(8);
         let coeffs: Vec<Ext> = (0..3)
             .map(|i| Ext::new([
@@ -281,7 +294,7 @@ mod tests {
     fn test_vanishing_polynomial() {
         let domain = BabyBearDomain::new(8);
         let vp = domain.vanishing_poly_coeffs();
-        let vpoly = crate::math::polynomial::Polynomial::new(vp);
+        let vpoly = crate::polynomial::Polynomial::new(vp);
 
         // The vanishing polynomial should be zero at all domain elements
         for x in domain.elements() {
@@ -303,3 +316,4 @@ mod tests {
         }
     }
 }
+
