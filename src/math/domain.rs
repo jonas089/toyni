@@ -15,6 +15,16 @@ pub struct BabyBearDomain {
     pub use_gpu: bool,
 }
 
+/// View field elements as the canonical `u32` values the GPU NTT operates on.
+/// No copy: `BabyBear` is `repr(C)` around a single `u32` (asserted here) and is
+/// always canonical, so the two slices have identical layout.
+#[cfg(feature = "cuda")]
+fn as_u32_mut(values: &mut [BabyBear]) -> &mut [u32] {
+    const _: () = assert!(std::mem::size_of::<BabyBear>() == std::mem::size_of::<u32>());
+    const _: () = assert!(std::mem::align_of::<BabyBear>() == std::mem::align_of::<u32>());
+    unsafe { std::slice::from_raw_parts_mut(values.as_mut_ptr() as *mut u32, values.len()) }
+}
+
 impl BabyBearDomain {
     /// Create a standard evaluation domain of the given size (must be power of 2).
     pub fn new(size: usize) -> Self {
@@ -88,15 +98,14 @@ impl BabyBearDomain {
 
         // NTT/INTT (GPU or CPU)
         #[cfg(feature = "cuda")]
-        if self.use_gpu {
-            if crate::ntt::cuda_available() {
-                crate::ntt::intt_cuda(&mut values).expect("CUDA INTT failed");
-                self.undo_coset_shift(&mut values);
-                return values;
-            }
+        if self.use_gpu && crate::ntt::cuda_available() {
+            let n = values.len();
+            crate::ntt::intt_cuda(as_u32_mut(&mut values), n, n).expect("CUDA INTT failed");
+            self.undo_coset_shift(&mut values);
+            return values;
         }
 
-        ntt::intt(&mut values, self.omega);
+        ntt::intt_babybear(&mut values);
         self.undo_coset_shift(&mut values);
         values
     }
@@ -111,14 +120,13 @@ impl BabyBearDomain {
         self.apply_coset_shift(&mut values);
 
         #[cfg(feature = "cuda")]
-        if self.use_gpu {
-            if crate::ntt::cuda_available() {
-                crate::ntt::ntt_cuda(&mut values).expect("CUDA NTT failed");
-                return values;
-            }
+        if self.use_gpu && crate::ntt::cuda_available() {
+            let n = values.len();
+            crate::ntt::ntt_cuda(as_u32_mut(&mut values), n, n).expect("CUDA NTT failed");
+            return values;
         }
 
-        ntt::ntt(&mut values, self.omega);
+        ntt::ntt_babybear(&mut values);
         values
     }
 

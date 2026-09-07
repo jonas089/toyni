@@ -77,13 +77,13 @@ impl Ext {
         Self { c: [self.c[0] * s, self.c[1] * s, self.c[2] * s, self.c[3] * s] }
     }
 
-    /// 32-byte little-endian serialization (4 × 8 bytes), for Merkle leaves /
+    /// 16-byte little-endian serialization (4 × 4 bytes), for Merkle leaves /
     /// transcript absorption.
     #[inline]
-    pub fn to_bytes(&self) -> [u8; 32] {
-        let mut out = [0u8; 32];
+    pub fn to_bytes(&self) -> [u8; 16] {
+        let mut out = [0u8; 16];
         for (i, limb) in self.c.iter().enumerate() {
-            out[i * 8..i * 8 + 8].copy_from_slice(&limb.to_bytes());
+            out[i * 4..i * 4 + 4].copy_from_slice(&limb.to_bytes());
         }
         out
     }
@@ -92,7 +92,7 @@ impl Ext {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut c = [BabyBear::zero(); 4];
         for (i, limb) in c.iter_mut().enumerate() {
-            *limb = BabyBear::from_bytes(&bytes[i * 8..i * 8 + 8]);
+            *limb = BabyBear::from_bytes(&bytes[i * 4..i * 4 + 4]);
         }
         Self { c }
     }

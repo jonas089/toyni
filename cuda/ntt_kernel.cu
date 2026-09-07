@@ -1,318 +1,208 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 
-// =============================================================================
-// CUDA NTT for the BabyBear field (p = 2^31 - 2^27 + 1).
+// GPU version of src/ntt/cpu.rs::ntt for many polynomials at once.
 //
-// What lives here:
-//   1. Field arithmetic primitives (add/sub/mul/pow) usable from both host
-//      and device.
-//   2. Three NTT kernels: bit-reversal permutation, one Cooley-Tukey
-//      butterfly stage, and the inverse-N scaling used by INTT.
-//   3. A persistent NTT context (`NttCtx`) that caches per-size twiddles and
-//      a reusable device buffer so repeated NTTs of the same size only pay
-//      for the H2D, kernels, and D2H — not for allocation or twiddle setup.
-//   4. Thin C wrappers around cudaMalloc / cudaMemcpy / cudaFree used by the
-//      Rust `CudaBuffer` RAII type.
+// The input is the polynomials laid end to end. Polynomial c is the n values
+// starting at values[c * stride]. Usually stride == n and the array is simply
+// poly 0, then poly 1, then poly 2:
 //
-// Everything is exported through `extern "C"` at the bottom so Rust can link
-// against it as a static library.
-// =============================================================================
+//   values: [ p0[0] p0[1] ... p0[n-1] | p1[0] p1[1] ... p1[n-1] | p2[0] ... ]
+//
+// stride > n lets the caller keep each polynomial in a taller buffer and
+// transform only its first n entries.
 
-// -----------------------------------------------------------------------------
-// Field arithmetic
-// -----------------------------------------------------------------------------
+#define P          2013265921u   // the CPU's `modulus`
+#define P_NEG_INV  0x77FFFFFFu   // -P^-1 mod 2^32
+#define R2_MOD_P   0x45DDDDE3u   // 2^64 mod P
+#define THREADS    256           // threads per block
+#define CHUNK_POLYS 1024         // polynomials uploaded per chunk
+#define NUM_STREAMS 3            // chunks in flight at once
 
-// BabyBear prime: 2^31 - 2^27 + 1.
-#define BABYBEAR_PRIME 2013265921ULL
+// ---- field arithmetic ------------------------------------------------------
+// Values live in Montgomery form (x * 2^32 mod P) so that mul needs no division.
+// add/sub are the CPU's, with min() replacing the if.
 
-// Barrett reduction constant: floor(2^64 / BABYBEAR_PRIME) = 9162596893.
-// Lets us reduce a 62-bit product (a*b with a,b < p < 2^31) to [0, p) using
-// only a multiply-high and one conditional subtract — no 64-bit division.
-#define BABYBEAR_BARRETT_MU 9162596893ULL
-
-// Fold a value in [0, 2p) (or [0, 3p) in the worst case) into [0, p).
-__device__ __host__ __forceinline__ uint64_t bb_reduce(uint64_t val) {
-    if (val >= BABYBEAR_PRIME) val -= BABYBEAR_PRIME;
-    if (val >= BABYBEAR_PRIME) val -= BABYBEAR_PRIME;
-    return val;
+__device__ inline uint32_t bb_add(uint32_t a, uint32_t b) {   // (a + b) % P
+    uint32_t s = a + b;
+    return min(s, s - P);
+}
+__device__ inline uint32_t bb_sub(uint32_t a, uint32_t b) {   // (a + P - b) % P
+    uint32_t d = a - b;
+    return min(d, d + P);
+}
+__device__ inline uint32_t mont_redc(uint32_t lo, uint32_t hi) {   // (hi:lo) / 2^32 mod P
+    uint32_t m = lo * P_NEG_INV;
+    uint32_t t = hi + __umulhi(m, P) + (lo != 0);
+    return min(t, t - P);
+}
+__device__ inline uint32_t mont_mul(uint32_t a, uint32_t b) {   // (a * b) % P, Montgomery form
+    return mont_redc(a * b, __umulhi(a, b));
 }
 
-__device__ __host__ __forceinline__ uint64_t bb_add(uint64_t a, uint64_t b) {
-    return bb_reduce(a + b);
+// ---- elementwise kernels: one thread per value, flat over the whole chunk ----
+
+__global__ void to_mont_kernel(uint32_t* v, uint32_t total) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < total) v[i] = mont_mul(v[i], R2_MOD_P);
+}
+// Leaves Montgomery form and multiplies by a plain scale (1, or n^-1 for the inverse).
+__global__ void from_mont_kernel(uint32_t* v, uint32_t total, uint32_t scale) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < total) v[i] = mont_redc(v[i] * scale, __umulhi(v[i], scale));
 }
 
-__device__ __host__ __forceinline__ uint64_t bb_sub(uint64_t a, uint64_t b) {
-    return (a >= b) ? (a - b) : (a + BABYBEAR_PRIME - b);
-}
+// ---- per-polynomial kernels ------------------------------------------------
+// Grid layout for everything below:
+//   blockIdx.y                              = which polynomial
+//   blockIdx.x * blockDim.x + threadIdx.x   = which position inside it
+// So `poly = coeffs + blockIdx.y * n` is a plain n-element array and the rest
+// of the kernel indexes it exactly like the CPU code indexes `coeffs`.
 
-__device__ __host__ __forceinline__ uint64_t bb_mul(uint64_t a, uint64_t b) {
-    // Inputs are in [0, p), so prod = a*b < p^2 < 2^62 fits in uint64_t.
-    // Barrett: q ≈ floor(prod / p) computed as the high half of prod * MU.
-    // The estimate is exact or one too small, so r = prod - q*p lies in
-    // [0, 2p) and a single conditional subtract folds it to [0, p).
-    uint64_t prod = a * b;
-
-    uint64_t q;
-#ifdef __CUDA_ARCH__
-    q = __umul64hi(prod, BABYBEAR_BARRETT_MU);
-#else
-    __uint128_t wide = (__uint128_t)prod * (__uint128_t)BABYBEAR_BARRETT_MU;
-    q = (uint64_t)(wide >> 64);
-#endif
-
-    uint64_t r = prod - q * BABYBEAR_PRIME;
-    if (r >= BABYBEAR_PRIME) r -= BABYBEAR_PRIME;
-    return r;
-}
-
-// Square-and-multiply modular exponentiation. Used on the host to derive
-// omega, omega^-1, and n^-1 when building an NttCtx.
-__device__ __host__ uint64_t bb_pow(uint64_t base, uint64_t exp) {
-    uint64_t result = 1;
-    while (exp > 0) {
-        if (exp & 1) result = bb_mul(result, base);
-        base = bb_mul(base, base);
-        exp >>= 1;
-    }
-    return result;
-}
-
-// BabyBear's full multiplicative subgroup of 2-power order has size 2^27,
-// generated by 440564289 = 31^15 mod p. For an NTT of size n = 2^log_n with
-// log_n <= 27, the principal n-th root of unity is root_27^(2^(27-log_n)).
-
-// -----------------------------------------------------------------------------
-// NTT kernels (Cooley-Tukey, decimation-in-time)
-// -----------------------------------------------------------------------------
-
-// Bit-reverse the low `log_n` bits of `x`. Used to permute the input into the
-// order Cooley-Tukey butterflies expect.
-__device__ uint32_t bit_reverse(uint32_t x, uint32_t log_n) {
-    uint32_t result = 0;
-    for (uint32_t i = 0; i < log_n; i++) {
-        result = (result << 1) | (x & 1);
-        x >>= 1;
-    }
-    return result;
-}
-
-// Initial permutation: swap each element with its bit-reversed counterpart.
-// One thread per index; the `idx < rev_idx` guard ensures each pair is
-// touched by exactly one thread (no race).
-__global__ void ntt_kernel_bit_reverse(uint64_t* values, uint32_t n, uint32_t log_n) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-
-    uint32_t rev_idx = bit_reverse(idx, log_n);
-    if (idx < rev_idx) {
-        uint64_t tmp = values[idx];
-        values[idx] = values[rev_idx];
-        values[rev_idx] = tmp;
+// CPU: `let mut coeffs = reverse(values);`
+__global__ void bit_reverse_kernel(uint32_t* coeffs, uint32_t n, uint32_t log_n) {
+    uint32_t* poly = coeffs + (size_t)blockIdx.y * n;
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    uint32_t rev = __brev(i) >> (32 - log_n);
+    if (i < rev) {                       // each pair is swapped once, by its lower index
+        uint32_t t = poly[i]; poly[i] = poly[rev]; poly[rev] = t;
     }
 }
 
-// One Cooley-Tukey butterfly stage with precomputed twiddle factors.
-// At stage s the array is logically partitioned into groups of size len = 2^s,
-// and each group does len/2 butterflies. Twiddle for butterfly `k` in a group
-// is `twiddles[k]` = omega^(k * n/len).
-__global__ void ntt_kernel_butterfly(uint64_t* values, uint32_t n, uint32_t stage,
-                                     const uint64_t* twiddles) {
-    uint32_t len = 1u << stage;
-    uint32_t half_len = len >> 1;
+// One stage. CPU: the body of `while len <= n`.
+// A stage splits the polynomial into groups of `len` and does `half` butterflies
+// per group. Butterfly b of the stage is (group b / half, position b % half):
+//     even = group * len + j        CPU: lo[j]
+//     odd  = even + half            CPU: hi[j]
+// One thread = one butterfly of one polynomial.
+__global__ void ntt_stage(uint32_t* coeffs, uint32_t n, uint32_t len, const uint32_t* roots) {
+    uint32_t* poly = coeffs + (size_t)blockIdx.y * n;
+    uint32_t b = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t half = len / 2;
+    if (b >= n / 2) return;
 
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n / 2) return;
+    uint32_t group = b / half;
+    uint32_t j     = b % half;
+    uint32_t even  = group * len + j;
+    uint32_t odd   = even + half;
 
-    uint32_t group = idx / half_len;
-    uint32_t pos_in_group = idx % half_len;
-    uint32_t i = group * len + pos_in_group;
-    uint32_t j = i + half_len;
-
-    uint64_t w = twiddles[pos_in_group];
-    uint64_t u = values[i];
-    uint64_t v = bb_mul(values[j], w);
-    values[i] = bb_add(u, v);
-    values[j] = bb_sub(u, v);
+    uint32_t w     = roots[j * (n / len)];        // CPU: let w = roots[j * stride];
+    uint32_t e     = poly[even];                  // CPU: let a = lo[j];
+    uint32_t w_odd = mont_mul(poly[odd], w);      // CPU: let b = hi[j] * w;
+    poly[even] = bb_add(e, w_odd);                // CPU: lo[j] = a + b;
+    poly[odd]  = bb_sub(e, w_odd);                // CPU: hi[j] = a - b;
 }
 
-// Final step of an INTT: multiply every element by n^-1 mod p.
-__global__ void scale_by_inv_n(uint64_t* values, uint32_t n, uint64_t inv_n) {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) values[idx] = bb_mul(values[idx], inv_n);
+// ---- entry points -------------------------------------------------------------
+// Polynomials go through in chunks of CHUNK_POLYS; each chunk is uploaded once,
+// gets one launch per stage, and is downloaded once, on its own stream. scale is
+// applied on the way out. values should come from cuda_host_alloc.
+
+static uint32_t blocks_for(uint32_t count) {   // enough blocks of THREADS to cover count
+    return (count + THREADS - 1) / THREADS;
 }
 
-// -----------------------------------------------------------------------------
-// Twiddle table
-//
-// For an NTT of size n with log2(n) = log_n stages, stage s (1-indexed) needs
-// half_len_s = 2^(s-1) twiddles. Total = 1 + 2 + ... + n/2 = n - 1.
-//
-// We pack all stages into a single device buffer:
-//   [stage 1: 1 twiddle][stage 2: 2 twiddles]...[stage log_n: n/2 twiddles]
-// The offset for stage s is sum_{i=1..s-1} 2^(i-1) = 2^(s-1) - 1, computed
-// inline at the call site (no separate offset array needed).
-// -----------------------------------------------------------------------------
-
-// Build the full twiddle table for size `n` with primitive n-th root `omega`
-// on the host, then upload to a fresh device buffer. Returns the device
-// pointer; caller frees with cudaFree.
-static uint64_t* build_twiddles_device(uint32_t n, uint32_t log_n, uint64_t omega) {
-    uint64_t* h_twiddles = new uint64_t[n - 1];
-
-    uint32_t offset = 0;
-    for (uint32_t stage = 1; stage <= log_n; stage++) {
-        uint32_t len = 1u << stage;
-        uint32_t half_len = len >> 1;
-        uint32_t step = n / len;
-
-        // Twiddles for this stage are powers of w_step. Compute incrementally
-        // (one mul per twiddle) instead of one bb_pow per twiddle.
-        uint64_t w_step = bb_pow(omega, step);
-        h_twiddles[offset] = 1;
-        for (uint32_t i = 1; i < half_len; i++) {
-            h_twiddles[offset + i] = bb_mul(h_twiddles[offset + i - 1], w_step);
-        }
-        offset += half_len;
-    }
-
-    uint64_t* d_twiddles;
-    cudaMalloc((void**)&d_twiddles, (n - 1) * sizeof(uint64_t));
-    cudaMemcpy(d_twiddles, h_twiddles, (n - 1) * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-    delete[] h_twiddles;
-    return d_twiddles;
-}
-
-// -----------------------------------------------------------------------------
-// Persistent NTT context
-//
-// One context per `n` caches:
-//   - forward twiddle table   (d_fwd)
-//   - inverse twiddle table   (d_inv)
-//   - n^-1 mod p              (inv_n_val, used by INTT scaling)
-//   - a reusable device data buffer of size n
-//
-// This eliminates per-call cudaMalloc/cudaFree, host twiddle precomputation,
-// per-stage H2D copies, and per-stage cudaDeviceSynchronize. After the first
-// call for a given `n`, each NTT/INTT pays exactly: one H2D, log_n+1 kernel
-// launches (plus one extra for INTT scaling), and one D2H.
-// -----------------------------------------------------------------------------
-
-struct NttCtx {
-    uint64_t* d_fwd;     // forward twiddle table on device
-    uint64_t* d_inv;     // inverse twiddle table on device
-    uint64_t* d_data;    // reusable device buffer of `n` elements
-    uint64_t  inv_n_val; // n^-1 mod p
-    uint32_t  n;
-    uint32_t  log_n;
-};
-
-extern "C" {
-
-NttCtx* ntt_ctx_create(uint32_t n) {
+static cudaError_t ntt_all_polys(uint32_t* values, const uint32_t* roots, uint32_t n,
+                                 uint32_t polys, uint32_t stride, uint32_t scale) {
     uint32_t log_n = 0;
-    for (uint32_t t = n; t > 1; t >>= 1) log_n++;
+    while ((1u << log_n) < n) log_n++;
 
-    // BabyBear's 2-adicity is 27 — sizes above 2^27 have no n-th root of unity
-    // and the shift below would be undefined. The Rust wrapper also asserts
-    // this, but guarding here keeps the C ABI well-defined.
-    if (log_n > 27) return nullptr;
+    uint32_t* d_roots;
+    cudaMalloc((void**)&d_roots, n * sizeof(uint32_t));
+    cudaMemcpy(d_roots, roots, n * sizeof(uint32_t), cudaMemcpyHostToDevice);
+    to_mont_kernel<<<blocks_for(n), THREADS>>>(d_roots, n);
 
-    uint64_t omega     = bb_pow(440564289ULL, 1ULL << (27 - log_n));
-    uint64_t inv_omega = bb_pow(omega, (uint64_t)n - 1);
-    uint64_t inv_n     = bb_pow((uint64_t)n, BABYBEAR_PRIME - 2);
-
-    NttCtx* ctx = new NttCtx();
-    ctx->n         = n;
-    ctx->log_n     = log_n;
-    ctx->inv_n_val = inv_n;
-    ctx->d_fwd     = build_twiddles_device(n, log_n, omega);
-    ctx->d_inv     = build_twiddles_device(n, log_n, inv_omega);
-    cudaMalloc((void**)&ctx->d_data, (size_t)n * sizeof(uint64_t));
-    return ctx;
-}
-
-void ntt_ctx_destroy(NttCtx* ctx) {
-    if (!ctx) return;
-    cudaFree(ctx->d_fwd);
-    cudaFree(ctx->d_inv);
-    cudaFree(ctx->d_data);
-    delete ctx;
-}
-
-// Forward NTT in place on host data. Uses the cached forward twiddles.
-//
-// All kernels run on the default stream and are therefore serialized by the
-// driver — no explicit cudaDeviceSynchronize is needed between stages, and
-// the closing cudaMemcpy is itself synchronous w.r.t. preceding kernel work.
-void ntt_run_inplace(NttCtx* ctx, uint64_t* h_data) {
-    uint32_t n = ctx->n;
-    uint32_t log_n = ctx->log_n;
-    uint32_t threads = 256;
-
-    cudaMemcpy(ctx->d_data, h_data, (size_t)n * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-    uint32_t blocks_n = (n + threads - 1) / threads;
-    ntt_kernel_bit_reverse<<<blocks_n, threads>>>(ctx->d_data, n, log_n);
-
-    uint32_t total_butterflies = n / 2;
-    uint32_t blocks_b = (total_butterflies + threads - 1) / threads;
-    for (uint32_t stage = 1; stage <= log_n; stage++) {
-        // Stage s starts at offset 2^(s-1) - 1 in the packed twiddle table.
-        uint32_t off = (1u << (stage - 1)) - 1;
-        ntt_kernel_butterfly<<<blocks_b, threads>>>(ctx->d_data, n, stage, ctx->d_fwd + off);
+    cudaStream_t streams[NUM_STREAMS];
+    uint32_t* d_coeffs[NUM_STREAMS];
+    for (int s = 0; s < NUM_STREAMS; s++) {
+        cudaStreamCreate(&streams[s]);
+        cudaMalloc((void**)&d_coeffs[s], (size_t)n * CHUNK_POLYS * sizeof(uint32_t));
     }
 
-    cudaMemcpy(h_data, ctx->d_data, (size_t)n * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-}
+    size_t poly_bytes = (size_t)n * sizeof(uint32_t);
+    int chunk = 0;
+    for (uint32_t p0 = 0; p0 < polys; p0 += CHUNK_POLYS, chunk++) {
+        uint32_t w = polys - p0 < CHUNK_POLYS ? polys - p0 : CHUNK_POLYS;   // polys in this chunk
+        uint32_t total = n * w;                                             // values in this chunk
+        cudaStream_t st = streams[chunk % NUM_STREAMS];
+        uint32_t* coeffs = d_coeffs[chunk % NUM_STREAMS];
+        uint32_t* host = values + (size_t)p0 * stride;                      // first poly of the chunk
 
-// Inverse NTT in place. Same structure as `ntt_run_inplace` but uses the
-// cached inverse twiddles and finishes with a 1/n scaling pass.
-void intt_run_inplace(NttCtx* ctx, uint64_t* h_data) {
-    uint32_t n = ctx->n;
-    uint32_t log_n = ctx->log_n;
-    uint32_t threads = 256;
+        // Copy w polynomials of n values each. On the host consecutive polynomials
+        // are `stride` values apart; on the device they are packed, n apart.
+        // When stride == n this is one contiguous copy.
+        cudaMemcpy2DAsync(coeffs, poly_bytes, host, (size_t)stride * sizeof(uint32_t),
+                          poly_bytes, w, cudaMemcpyHostToDevice, st);
 
-    cudaMemcpy(ctx->d_data, h_data, (size_t)n * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        dim3 per_value(blocks_for(n), w);        // x covers positions 0..n, y is the polynomial
+        dim3 per_butterfly(blocks_for(n / 2), w); // x covers butterflies 0..n/2, y is the polynomial
 
-    uint32_t blocks_n = (n + threads - 1) / threads;
-    ntt_kernel_bit_reverse<<<blocks_n, threads>>>(ctx->d_data, n, log_n);
+        // The whole NTT for this chunk, as a sequence of kernel launches on stream
+        // `st`. Launches on one stream run in order, so each step sees the previous
+        // step's output; nothing here waits on the host. Every launch works on all
+        // w polynomials of the chunk at once (the y dimension of the grid).
 
-    uint32_t total_butterflies = n / 2;
-    uint32_t blocks_b = (total_butterflies + threads - 1) / threads;
-    for (uint32_t stage = 1; stage <= log_n; stage++) {
-        uint32_t off = (1u << (stage - 1)) - 1;
-        ntt_kernel_butterfly<<<blocks_b, threads>>>(ctx->d_data, n, stage, ctx->d_inv + off);
+        // 1. Convert every value to Montgomery form (x -> x * 2^32 mod P) so the
+        //    butterflies can use mont_mul. Flat over all n*w values.
+        to_mont_kernel<<<blocks_for(total), THREADS, 0, st>>>(coeffs, total);
+
+        // 2. Bit-reverse permutation of each polynomial's n positions.
+        //    CPU: `let mut coeffs = reverse(values);`
+        bit_reverse_kernel<<<per_value, THREADS, 0, st>>>(coeffs, n, log_n);
+
+        // 3. The log2(n) butterfly stages, one launch each, len = 2, 4, ..., n.
+        //    Each stage reads and writes the whole polynomial, so consecutive
+        //    stages must be separate launches: the kernel boundary is the global
+        //    barrier between them. CPU: the `while len <= n` loop.
+        for (uint32_t len = 2; len <= n; len *= 2) {
+            ntt_stage<<<per_butterfly, THREADS, 0, st>>>(coeffs, n, len, d_roots);
+        }
+
+        // 4. Leave Montgomery form and apply `scale` (1 for ntt, n^-1 for intt).
+        from_mont_kernel<<<blocks_for(total), THREADS, 0, st>>>(coeffs, total, scale);
+
+        // 5. Copy the transformed chunk back into place in `values`. Same 2D copy
+        //    as the upload with source and destination swapped: device rows are n
+        //    apart, host rows are `stride` apart. Queued on `st`, so it runs after
+        //    step 4 and overlaps with the next chunk's work on another stream.
+        cudaMemcpy2DAsync(host, (size_t)stride * sizeof(uint32_t), coeffs, poly_bytes,
+                          poly_bytes, w, cudaMemcpyDeviceToHost, st);
     }
 
-    scale_by_inv_n<<<blocks_n, threads>>>(ctx->d_data, n, ctx->inv_n_val);
-
-    cudaMemcpy(h_data, ctx->d_data, (size_t)n * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    for (int s = 0; s < NUM_STREAMS; s++) {
+        cudaStreamDestroy(streams[s]);
+        cudaFree(d_coeffs[s]);
+    }
+    cudaFree(d_roots);
+    return cudaGetLastError();
 }
 
-// -----------------------------------------------------------------------------
-// Generic CUDA helpers exposed to Rust's `CudaBuffer` RAII wrapper.
-// -----------------------------------------------------------------------------
+// Pinned host memory. Allocate the buffer with this once; the async copies in
+// ntt_all_polys only overlap with kernels when the host buffer is pinned.
+extern "C" uint32_t* cuda_host_alloc(size_t count) {
+    void* p = nullptr;
+    return cudaHostAlloc(&p, count * sizeof(uint32_t), cudaHostAllocDefault) == cudaSuccess ? (uint32_t*)p : nullptr;
+}
+extern "C" void cuda_host_free(uint32_t* p) { cudaFreeHost(p); }
 
-cudaError_t cuda_malloc(uint64_t** d_ptr, size_t count) {
-    return cudaMalloc((void**)d_ptr, count * sizeof(uint64_t));
+extern "C" cudaError_t cuda_ntt(uint32_t* values, const uint32_t* roots, uint32_t n,
+                                uint32_t polys, uint32_t stride) {
+    return ntt_all_polys(values, roots, n, polys, stride, 1);
 }
 
-cudaError_t cuda_free(uint64_t* d_ptr) {
-    return cudaFree(d_ptr);
-}
+// CPU: intt = ntt with inv_roots, then multiply by n^-1.
+extern "C" cudaError_t cuda_intt(uint32_t* values, const uint32_t* roots, uint32_t n,
+                                 uint32_t polys, uint32_t stride) {
+    uint32_t* inv_roots = new uint32_t[n];
+    inv_roots[0] = roots[0];
+    for (uint32_t i = 1; i < n; i++) inv_roots[i] = roots[n - i];
 
-cudaError_t cuda_copy_to_device(uint64_t* d_dest, const uint64_t* h_src, size_t count) {
-    return cudaMemcpy(d_dest, h_src, count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-}
+    uint64_t inv_n = 1;                       // (2^-1)^log2(n), with 2^-1 = (P+1)/2
+    for (uint32_t m = n; m > 1; m /= 2) inv_n = inv_n * ((P + 1) / 2) % P;
 
-cudaError_t cuda_copy_from_device(uint64_t* h_dest, const uint64_t* d_src, size_t count) {
-    return cudaMemcpy(h_dest, d_src, count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    cudaError_t err = ntt_all_polys(values, inv_roots, n, polys, stride, (uint32_t)inv_n);
+    delete[] inv_roots;
+    return err;
 }
-
-const char* cuda_get_error_string(cudaError_t error) {
-    return cudaGetErrorString(error);
-}
-
-} // extern "C"

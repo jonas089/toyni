@@ -49,7 +49,7 @@ impl FiatShamirTranscript {
         ])
     }
 
-    /// Absorb an extension-field element (32 bytes).
+    /// Absorb an extension-field element (16 bytes).
     pub fn absorb_ext(&mut self, val: Ext) {
         self.absorb(&val.to_bytes());
     }
