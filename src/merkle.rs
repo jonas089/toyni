@@ -122,6 +122,129 @@ pub fn verify_merkle_proof(
     current_hash == *root
 }
 
+/// One opening for a whole set of leaves.
+///
+/// Queries into the same tree share almost every internal node, so sending a
+/// full path per leaf sends the upper levels over and over. This sends each
+/// needed node once, in the order both sides walk the tree, which is where most
+/// of a FRI proof's size goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MerkleMultiProof {
+    /// Sibling nodes, bottom level first and ascending by index within a level.
+    pub nodes: Vec<Vec<u8>>,
+}
+
+impl MerkleTree {
+    /// Open several leaves at once. Indices need not be sorted or distinct.
+    pub fn multi_proof(&self, indices: &[usize]) -> Option<MerkleMultiProof> {
+        let mut known = sorted_distinct(indices);
+        if known.last().is_some_and(|&i| i >= self.leaves.len()) {
+            return None;
+        }
+        if known.is_empty() {
+            return Some(MerkleMultiProof { nodes: Vec::new() });
+        }
+
+        let mut nodes = Vec::new();
+        let mut level_size = self.leaves.len();
+        for level in 0..depth_for(self.leaves.len()) {
+            let mut parents = Vec::with_capacity(known.len());
+            let mut i = 0;
+            while i < known.len() {
+                let idx = known[i];
+                if idx == level_size - 1 && level_size % 2 == 1 {
+                    // Last node of an odd level is its own sibling.
+                } else if idx % 2 == 0 && known.get(i + 1) == Some(&(idx + 1)) {
+                    // Both halves are known, so no node is needed.
+                    i += 1;
+                } else {
+                    nodes.push(self.levels[level][idx ^ 1].clone());
+                }
+                parents.push(idx / 2);
+                i += 1;
+            }
+            known = parents;
+            level_size = (level_size + 1) / 2;
+        }
+        Some(MerkleMultiProof { nodes })
+    }
+}
+
+/// Verify a batch opening.
+///
+/// `leaves` are the leaf preimages with the index each sits at. They may be in
+/// any order and may repeat; a repeated index must carry the same leaf.
+pub fn verify_multi_proof(
+    leaves: &[(usize, Vec<u8>)],
+    num_leaves: usize,
+    proof: &MerkleMultiProof,
+    root: &[u8],
+) -> bool {
+    if num_leaves == 0 || leaves.is_empty() {
+        return false;
+    }
+    let mut sorted: Vec<(usize, Vec<u8>)> = leaves.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    // A repeated index must agree with itself, or a prover could claim two
+    // values for one position.
+    sorted.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    if sorted.windows(2).any(|w| w[0].0 == w[1].0) {
+        return false;
+    }
+    if sorted.last().is_some_and(|(i, _)| *i >= num_leaves) {
+        return false;
+    }
+
+    let mut known: Vec<(usize, Vec<u8>)> =
+        sorted.into_iter().map(|(i, leaf)| (i, hash_leaf(&leaf))).collect();
+    let mut level_size = num_leaves;
+    let mut feed = proof.nodes.iter();
+
+    for _ in 0..depth_for(num_leaves) {
+        let mut parents: Vec<(usize, Vec<u8>)> = Vec::with_capacity(known.len());
+        let mut i = 0;
+        while i < known.len() {
+            let (idx, ref node) = known[i];
+            let (left, right) = if idx == level_size - 1 && level_size % 2 == 1 {
+                (node.clone(), node.clone())
+            } else if idx % 2 == 0 && known.get(i + 1).map(|(j, _)| *j) == Some(idx + 1) {
+                let pair = known[i + 1].1.clone();
+                i += 1;
+                (node.clone(), pair)
+            } else {
+                let Some(sibling) = feed.next() else {
+                    return false;
+                };
+                if sibling.len() != 32 {
+                    return false;
+                }
+                if idx % 2 == 0 {
+                    (node.clone(), sibling.clone())
+                } else {
+                    (sibling.clone(), node.clone())
+                }
+            };
+            parents.push((idx / 2, hash_node(&left, &right)));
+            i += 1;
+        }
+        known = parents;
+        level_size = (level_size + 1) / 2;
+    }
+
+    // Every supplied node must have been used, so a proof cannot carry slack.
+    if feed.next().is_some() {
+        return false;
+    }
+    known.len() == 1 && known[0].1 == *root
+}
+
+fn sorted_distinct(indices: &[usize]) -> Vec<usize> {
+    let mut out = indices.to_vec();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Number of sibling hashes on a root path for a tree with `num_leaves` leaves.
 pub fn depth_for(num_leaves: usize) -> usize {
     let mut depth = 0;
@@ -213,6 +336,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A batch opening must accept exactly what the individual openings do,
+    /// and must be smaller.
+    #[test]
+    fn multi_proofs_agree_with_single_proofs() {
+        for count in [1usize, 2, 3, 5, 8, 9, 16, 64] {
+            let ls: Vec<Vec<u8>> = (1..=count as u64).map(leaf).collect();
+            let tree = MerkleTree::new(ls.clone());
+            let root = tree.root().unwrap();
+
+            for step in [1usize, 2, 3, 7] {
+                let indices: Vec<usize> = (0..count).step_by(step).collect();
+                let batch = tree.multi_proof(&indices).unwrap();
+                let opened: Vec<(usize, Vec<u8>)> =
+                    indices.iter().map(|&i| (i, ls[i].clone())).collect();
+                assert!(
+                    verify_multi_proof(&opened, count, &batch, &root),
+                    "count={count} step={step}"
+                );
+
+                // Never larger than sending a path each, and smaller as soon as
+                // the paths overlap.
+                let single: usize = indices
+                    .iter()
+                    .map(|&i| tree.get_proof(i).unwrap().path.len())
+                    .sum();
+                assert!(batch.nodes.len() <= single, "count={count} step={step}");
+                if indices.len() > 1 && count > 2 {
+                    assert!(batch.nodes.len() < single, "no saving at count={count}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batch_openings_are_bound_to_their_indices() {
+        let ls: Vec<Vec<u8>> = (1..=16).map(leaf).collect();
+        let tree = MerkleTree::new(ls.clone());
+        let root = tree.root().unwrap();
+        let indices = [1usize, 4, 5, 11];
+        let batch = tree.multi_proof(&indices).unwrap();
+        let good: Vec<(usize, Vec<u8>)> =
+            indices.iter().map(|&i| (i, ls[i].clone())).collect();
+        assert!(verify_multi_proof(&good, 16, &batch, &root));
+
+        // A leaf moved to another of the opened positions must fail.
+        let mut moved = good.clone();
+        moved[0].1 = ls[4].clone();
+        assert!(!verify_multi_proof(&moved, 16, &batch, &root));
+
+        // Dropping or adding a leaf changes the shape and must fail.
+        assert!(!verify_multi_proof(&good[..3], 16, &batch, &root));
+        let mut extra = good.clone();
+        extra.push((7, ls[7].clone()));
+        assert!(!verify_multi_proof(&extra, 16, &batch, &root));
+
+        // Two different values for one index must fail.
+        let mut doubled = good.clone();
+        doubled.push((1, ls[2].clone()));
+        assert!(!verify_multi_proof(&doubled, 16, &batch, &root));
+
+        // A proof carrying slack must fail.
+        let mut padded = batch.clone();
+        padded.nodes.push(vec![0u8; 32]);
+        assert!(!verify_multi_proof(&good, 16, &padded, &root));
+        let mut short = batch;
+        short.nodes.pop();
+        assert!(!verify_multi_proof(&good, 16, &short, &root));
+    }
+
+    /// Order must not matter to the caller, since query indices arrive in
+    /// transcript order.
+    #[test]
+    fn batch_openings_ignore_input_order() {
+        let ls: Vec<Vec<u8>> = (1..=32).map(leaf).collect();
+        let tree = MerkleTree::new(ls.clone());
+        let root = tree.root().unwrap();
+        let batch = tree.multi_proof(&[9, 2, 30, 2]).unwrap();
+        let shuffled = vec![
+            (30usize, ls[30].clone()),
+            (2, ls[2].clone()),
+            (9, ls[9].clone()),
+        ];
+        assert!(verify_multi_proof(&shuffled, 32, &batch, &root));
     }
 
     /// The depth is pinned by the leaf count, so a truncated or padded path
