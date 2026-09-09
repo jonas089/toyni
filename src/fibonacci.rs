@@ -18,6 +18,8 @@ pub const COSET_SHIFT: u64 = 7;
 /// Random blinding coefficients per trace polynomial (T_hat = T + Z_H * R).
 /// Covers every revealed trace evaluation: 3 openings per query + 3 OOD points.
 pub const MASK_DEGREE: usize = 3 * NUM_QUERIES + 8;
+/// DEEP terms: `T(x)`, `T(g*x)`, `T(g^2*x)` and `Q(x)`.
+pub const NUM_DEEP_TERMS: usize = 4;
 
 // ── proof data structures ──────────────────────────────────────────────
 
@@ -193,20 +195,31 @@ impl StarkProver {
         transcript.absorb_ext(q_z);
 
         // ── 5. DEEP polynomial (extension field) ───────────────────────
-        // D(x) = Σ (P(x) - P(z)) / (x - z) over {Q, T, T∘g, T∘g²}. x is base,
-        // z is Ext, so the terms are Ext-valued; base openings are lifted.
+        // One independent coefficient per term, drawn *after* the claimed OOD
+        // values are absorbed. See `deep_value` for why that matters.
+        let deep_coeffs: [Ext; NUM_DEEP_TERMS] = [
+            transcript.squeeze_ext_challenge(),
+            transcript.squeeze_ext_challenge(),
+            transcript.squeeze_ext_challenge(),
+            transcript.squeeze_ext_challenge(),
+        ];
+
         let d_evals: Vec<Ext> = (0..lde_size)
             .map(|i| {
                 let x = shifted_elements[i];
-                let inv_x_z = (Ext::from(x) - z).inverse();
-                let t_x = Ext::from(trace_lde[i]);
-                let t_gx = Ext::from(trace_lde[(i + BLOWUP) % lde_size]);
-                let t_ggx = Ext::from(trace_lde[(i + 2 * BLOWUP) % lde_size]);
-                let q_x = Ext::from(q_evals[i]);
-                (q_x - q_z) * inv_x_z
-                    + (t_ggx - t_ggz) * inv_x_z
-                    + (t_gx - t_gz) * inv_x_z
-                    + (t_x - t_z) * inv_x_z
+                deep_value(
+                    Ext::from(x),
+                    z,
+                    Ext::from(trace_lde[i]),
+                    Ext::from(trace_lde[(i + BLOWUP) % lde_size]),
+                    Ext::from(trace_lde[(i + 2 * BLOWUP) % lde_size]),
+                    Ext::from(q_evals[i]),
+                    t_z,
+                    t_gz,
+                    t_ggz,
+                    q_z,
+                    &deep_coeffs,
+                )
             })
             .collect();
 
@@ -386,6 +399,36 @@ fn open_merkle_ext(tree: &MerkleTree, evals: &[Ext], index: usize) -> MerkleOpen
         value: evals[index],
         proof,
     }
+}
+
+/// `D(x) = sum_i c_i * (P_i(x) - P_i(z)) / (x - z)` over `{T, T.g, T.g^2, Q}`.
+///
+/// **The coefficients are what bind each column individually.** With every term
+/// weighted 1 this collapses to `(Q + T + T.g + T.g^2 - sigma)/(x - z)`, so the
+/// only thing tied to the commitments is the *sum* `sigma` of the four claimed
+/// out-of-domain values. Together with the constraint identity at `z` that is
+/// two equations in four unknowns, and the remaining freedom is enough to make
+/// a uniformly random trace verify. Prover and verifier both call this, so they
+/// cannot drift apart.
+#[allow(clippy::too_many_arguments)]
+pub fn deep_value(
+    x: Ext,
+    z: Ext,
+    t_x: Ext,
+    t_gx: Ext,
+    t_ggx: Ext,
+    q_x: Ext,
+    t_z: Ext,
+    t_gz: Ext,
+    t_ggz: Ext,
+    q_z: Ext,
+    coeffs: &[Ext; NUM_DEEP_TERMS],
+) -> Ext {
+    let inv = (x - z).inverse();
+    coeffs[0] * (t_x - t_z) * inv
+        + coeffs[1] * (t_gx - t_gz) * inv
+        + coeffs[2] * (t_ggx - t_ggz) * inv
+        + coeffs[3] * (q_x - q_z) * inv
 }
 
 /// Derive the out-of-domain point in the extension field. A random extension

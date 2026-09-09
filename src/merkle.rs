@@ -1,9 +1,16 @@
 use sha2::{Digest, Sha256};
 
+/// The sibling hashes from a leaf to the root, leaf level first.
+///
+/// The left/right decision at each level is deliberately *not* stored here: it
+/// is derived from the leaf index the verifier asks about. An earlier version
+/// kept prover-chosen direction bits and ignored the index, which let a prover
+/// answer a query at position `i` with the leaf and path of any other position
+/// `j` — making every query check vacuous. See
+/// `tests::index_substitution_is_rejected`.
 #[derive(Debug, Clone)]
 pub struct MerkleProof {
     pub path: Vec<Vec<u8>>,
-    pub position: Vec<bool>,
 }
 
 #[derive(Debug)]
@@ -53,30 +60,19 @@ impl MerkleTree {
         }
 
         let mut path = Vec::new();
-        let mut position = Vec::new();
         let mut current_index = index;
 
         // Start from the leaf level
         for level in &self.levels[..self.levels.len() - 1] {
-            let sibling_index = if current_index % 2 == 0 {
-                current_index + 1
-            } else {
-                current_index - 1
-            };
-
-            // If we're at the last node in an odd-sized level, use the node itself as sibling
-            if sibling_index >= level.len() {
-                path.push(level.get(current_index).unwrap().clone());
-                position.push(true); // Treat as if sibling is on the right
-            } else {
-                path.push(level.get(sibling_index).unwrap().clone());
-                position.push(current_index % 2 == 1);
-            }
-
+            // If we're at the last node in an odd-sized level, it is its own sibling
+            let sibling = level
+                .get(current_index ^ 1)
+                .unwrap_or_else(|| level.get(current_index).unwrap());
+            path.push(sibling.clone());
             current_index /= 2;
         }
 
-        Some(MerkleProof { path, position })
+        Some(MerkleProof { path })
     }
 
     pub fn root(&self) -> Option<Vec<u8>> {
@@ -84,20 +80,57 @@ impl MerkleTree {
     }
 }
 
-pub fn verify_merkle_proof(leaf: Vec<u8>, proof: &MerkleProof, root: &Vec<u8>) -> bool {
+/// Verify that `leaf` sits at `index` of a tree of `num_leaves` leaves.
+///
+/// The index is what makes this binding: the direction taken at each level is
+/// computed from it, and the path must have exactly the depth `num_leaves`
+/// implies. A path for a different position therefore cannot verify.
+pub fn verify_merkle_proof(
+    leaf: &[u8],
+    index: usize,
+    num_leaves: usize,
+    proof: &MerkleProof,
+    root: &[u8],
+) -> bool {
+    if num_leaves == 0 || index >= num_leaves || proof.path.len() != depth_for(num_leaves) {
+        return false;
+    }
+
     // Mirror build_tree: the supplied leaf is first domain-separated as a leaf,
     // then combined upward as internal nodes.
-    let mut current_hash = hash_leaf(&leaf);
+    let mut current_hash = hash_leaf(leaf);
+    let mut idx = index;
+    let mut level_size = num_leaves;
 
-    for (sibling, is_right) in proof.path.iter().zip(proof.position.iter()) {
-        current_hash = if *is_right {
-            hash_node(sibling, &current_hash)
-        } else {
+    for sibling in &proof.path {
+        // The last node of an odd-sized level is its own sibling, and must be
+        // presented as such; anything else is a malformed path.
+        current_hash = if idx == level_size - 1 && level_size % 2 == 1 {
+            if *sibling != current_hash {
+                return false;
+            }
+            hash_node(&current_hash, &current_hash)
+        } else if idx % 2 == 0 {
             hash_node(&current_hash, sibling)
+        } else {
+            hash_node(sibling, &current_hash)
         };
+        idx /= 2;
+        level_size = (level_size + 1) / 2;
     }
 
     current_hash == *root
+}
+
+/// Number of sibling hashes on a root path for a tree with `num_leaves` leaves.
+pub fn depth_for(num_leaves: usize) -> usize {
+    let mut depth = 0;
+    let mut size = num_leaves;
+    while size > 1 {
+        size = (size + 1) / 2;
+        depth += 1;
+    }
+    depth
 }
 
 /// Domain-separation tags keep the leaf and internal-node hash spaces disjoint,
@@ -132,36 +165,20 @@ mod tests {
 
     #[test]
     fn test_merkle_proof_verification() {
-        let leaves: Vec<Vec<u8>> = (1..=4).map(leaf).collect();
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        for i in 0..4 {
-            let proof = tree.get_proof(i).unwrap();
-            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
+        for count in [1usize, 2, 3, 4, 5, 8, 9] {
+            let leaves: Vec<Vec<u8>> = (1..=count as u64).map(leaf).collect();
+            let tree = MerkleTree::new(leaves.clone());
+            let root = tree.root().unwrap();
+            for i in 0..count {
+                let proof = tree.get_proof(i).unwrap();
+                assert!(
+                    verify_merkle_proof(&leaves[i], i, count, &proof, &root),
+                    "honest opening failed at {}/{}",
+                    i,
+                    count
+                );
+            }
         }
-    }
-
-    #[test]
-    fn test_merkle_proof_odd_leaves() {
-        let leaves: Vec<Vec<u8>> = (1..=3).map(leaf).collect();
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        for i in 0..3 {
-            let proof = tree.get_proof(i).unwrap();
-            assert!(verify_merkle_proof(leaves[i].clone(), &proof, &root));
-        }
-    }
-
-    #[test]
-    fn test_merkle_proof_single_leaf() {
-        let leaves = vec![leaf(1)];
-        let tree = MerkleTree::new(leaves.clone());
-        let root = tree.root().unwrap();
-
-        let proof = tree.get_proof(0).unwrap();
-        assert!(verify_merkle_proof(leaves[0].clone(), &proof, &root));
     }
 
     #[test]
@@ -172,7 +189,47 @@ mod tests {
 
         let proof = tree.get_proof(0).unwrap();
         // A different leaf value at position 0 must not verify.
-        assert!(!verify_merkle_proof(leaf(99), &proof, &root));
+        assert!(!verify_merkle_proof(&leaf(99), 0, 4, &proof, &root));
+    }
+
+    /// The exploit that motivated index binding: leaf `j` with leaf `j`'s
+    /// authentication path must not verify at any position other than `j`.
+    /// Without this, a prover can answer any query with any committed value and
+    /// every FRI/DEEP query check becomes vacuous.
+    #[test]
+    fn index_substitution_is_rejected() {
+        let leaves: Vec<Vec<u8>> = (1..=8).map(leaf).collect();
+        let tree = MerkleTree::new(leaves.clone());
+        let root = tree.root().unwrap();
+
+        let proof = tree.get_proof(5).unwrap();
+        assert!(verify_merkle_proof(&leaves[5], 5, 8, &proof, &root));
+        for claimed in 0..8 {
+            if claimed != 5 {
+                assert!(
+                    !verify_merkle_proof(&leaves[5], claimed, 8, &proof, &root),
+                    "leaf 5 was accepted at position {}",
+                    claimed
+                );
+            }
+        }
+    }
+
+    /// The depth is pinned by the leaf count, so a truncated or padded path
+    /// cannot verify.
+    #[test]
+    fn wrong_path_length_is_rejected() {
+        let leaves: Vec<Vec<u8>> = (1..=8).map(leaf).collect();
+        let tree = MerkleTree::new(leaves.clone());
+        let root = tree.root().unwrap();
+
+        let mut short = tree.get_proof(0).unwrap();
+        short.path.pop();
+        assert!(!verify_merkle_proof(&leaves[0], 0, 8, &short, &root));
+
+        let mut long = tree.get_proof(0).unwrap();
+        long.path.push(vec![0u8; 32]);
+        assert!(!verify_merkle_proof(&leaves[0], 0, 8, &long, &root));
     }
 
     #[test]

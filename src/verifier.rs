@@ -3,20 +3,42 @@ use crate::ext::Ext;
 use crate::math::domain::BabyBearDomain;
 use crate::merkle::{verify_merkle_proof, MerkleTree};
 use crate::fibonacci::{
-    eval_boundary_1_ext, eval_boundary_2_ext, eval_fibonacci_constraint_ext, MerkleOpening,
-    MerkleOpeningExt, StarkProof, BLOWUP, COSET_SHIFT, MASK_DEGREE, NUM_QUERIES,
+    deep_value, eval_boundary_1_ext, eval_boundary_2_ext, eval_fibonacci_constraint_ext,
+    MerkleOpening, MerkleOpeningExt, StarkProof, BLOWUP, COSET_SHIFT, MASK_DEGREE,
+    NUM_DEEP_TERMS, NUM_QUERIES,
 };
 use crate::transcript::FiatShamirTranscript;
+
+/// Largest trace length the verifier will consider. Bounds the work a malformed
+/// proof can make it do, and keeps the LDE inside BabyBear's 2-adicity (2^27).
+pub const MAX_TRACE_LEN: usize = 1 << 20;
 
 pub struct StarkVerifier;
 
 impl StarkVerifier {
+    /// Check `proof`. A proof is untrusted input, so every failure path returns
+    /// `false`: an earlier version reached `assert!`s inside
+    /// `BabyBearDomain::new` and `get_root_of_unity`, indexed
+    /// `fri_final_layer` unchecked, and could spin in `derive_z_verifier` —
+    /// all reachable from a malformed proof.
     pub fn verify(&self, proof: &StarkProof) -> bool {
         let trace_len = proof.trace_len;
         let lde_size = proof.lde_size;
 
-        // Sanity: lde_size must equal trace_len * BLOWUP
-        if lde_size != trace_len * BLOWUP {
+        // Parameters first: everything below indexes and allocates from these.
+        if !trace_len.is_power_of_two() || trace_len < 4 || trace_len > MAX_TRACE_LEN {
+            return false;
+        }
+        if lde_size != trace_len * BLOWUP
+            || !lde_size.is_power_of_two()
+            || lde_size.trailing_zeros() > 27
+        {
+            return false;
+        }
+        if proof.trace_commitment.len() != 32
+            || proof.quotient_commitment.len() != 32
+            || proof.fri_commitments.iter().any(|c| c.len() != 32)
+        {
             return false;
         }
 
@@ -33,7 +55,10 @@ impl StarkVerifier {
         transcript.absorb_commitment(&proof.trace_commitment);
         transcript.absorb_commitment(&proof.quotient_commitment);
 
-        let z = derive_z_verifier(&mut transcript);
+        let z = match derive_z_verifier(&mut transcript) {
+            Some(z) => z,
+            None => return false,
+        };
 
         transcript.absorb_ext(proof.t_z);
         transcript.absorb_ext(proof.t_gz);
@@ -48,7 +73,15 @@ impl StarkVerifier {
             return false;
         }
 
-        // ── 3. Replay FRI commitments & derive betas ───────────────────
+        // ── 3. DEEP coefficients ───────────────────────────────────────
+        // Drawn after the OOD values are absorbed, so the prover commits to its
+        // claims before learning how they will be weighted.
+        let mut deep_coeffs = [Ext::zero(); NUM_DEEP_TERMS];
+        for c in deep_coeffs.iter_mut() {
+            *c = transcript.squeeze_ext_challenge();
+        }
+
+        // ── 4. Replay FRI commitments & derive betas ───────────────────
         if proof.fri_commitments.is_empty() {
             return false;
         }
@@ -113,57 +146,49 @@ impl StarkVerifier {
                 return false;
             }
 
-            // 6a. Verify Merkle proofs for trace openings (3 positions)
-            if !verify_opening(&qp.trace_opening, &proof.trace_commitment) {
+            // 6a. Trace and quotient openings. Each is verified against the
+            //     index the verifier derived, not one carried in the proof.
+            let idx_g = (qi + BLOWUP) % lde_size;
+            let idx_gg = (qi + 2 * BLOWUP) % lde_size;
+            if !verify_opening(&qp.trace_opening, qi, lde_size, &proof.trace_commitment)
+                || !verify_opening(&qp.trace_opening_g, idx_g, lde_size, &proof.trace_commitment)
+                || !verify_opening(&qp.trace_opening_gg, idx_gg, lde_size, &proof.trace_commitment)
+            {
                 return false;
             }
-            if !verify_opening(&qp.trace_opening_g, &proof.trace_commitment) {
-                return false;
-            }
-            if !verify_opening(&qp.trace_opening_gg, &proof.trace_commitment) {
+            if !verify_opening(&qp.quotient_opening, qi, lde_size, &proof.quotient_commitment) {
                 return false;
             }
 
-            // Verify indices are correct
-            let expected_idx_g = (qi + BLOWUP) % lde_size;
-            let expected_idx_gg = (qi + 2 * BLOWUP) % lde_size;
-            if qp.trace_opening.index != qi
-                || qp.trace_opening_g.index != expected_idx_g
-                || qp.trace_opening_gg.index != expected_idx_gg
+            // 6b. DEEP layer (FRI layer 0): the position and its fold pair.
+            let half0 = lde_size / 2;
+            if !verify_opening_ext(&qp.deep_opening, qi, lde_size, &proof.fri_commitments[0])
+                || !verify_opening_ext(
+                    &qp.deep_opening_pair,
+                    qi + half0,
+                    lde_size,
+                    &proof.fri_commitments[0],
+                )
             {
                 return false;
             }
 
-            // 6b. Verify Merkle proof for quotient opening
-            if !verify_opening(&qp.quotient_opening, &proof.quotient_commitment) {
-                return false;
-            }
-
-            // 6c. Verify Merkle proofs for DEEP layer (FRI layer 0)
-            if !verify_opening_ext(&qp.deep_opening, &proof.fri_commitments[0]) {
-                return false;
-            }
-            if !verify_opening_ext(&qp.deep_opening_pair, &proof.fri_commitments[0]) {
-                return false;
-            }
-
-            // 6d. DEEP polynomial consistency check
-            //     D(x) = (Q(x)-Q(z))/(x-z) + (T(x)-T(z))/(x-z)
-            //           + (T(gx)-T(gz))/(x-z) + (T(g²x)-T(g²z))/(x-z)
-            //
-            //     x is base, z is Ext; lift the base openings into Ext.
+            // 6c. DEEP consistency: the committed columns really do compose
+            //     into the committed DEEP layer, *term by term*.
             let x_i = shifted_elements[qi];
-            let t_x = Ext::from(qp.trace_opening.value);
-            let t_gx = Ext::from(qp.trace_opening_g.value);
-            let t_ggx = Ext::from(qp.trace_opening_gg.value);
-            let q_x = Ext::from(qp.quotient_opening.value);
-
-            let inv_x_minus_z = (Ext::from(x_i) - z).inverse();
-            let expected_deep = (q_x - proof.q_z) * inv_x_minus_z
-                + (t_ggx - proof.t_ggz) * inv_x_minus_z
-                + (t_gx - proof.t_gz) * inv_x_minus_z
-                + (t_x - proof.t_z) * inv_x_minus_z;
-
+            let expected_deep = deep_value(
+                Ext::from(x_i),
+                z,
+                Ext::from(qp.trace_opening.value),
+                Ext::from(qp.trace_opening_g.value),
+                Ext::from(qp.trace_opening_gg.value),
+                Ext::from(qp.quotient_opening.value),
+                proof.t_z,
+                proof.t_gz,
+                proof.t_ggz,
+                proof.q_z,
+                &deep_coeffs,
+            );
             if qp.deep_opening.value != expected_deep {
                 return false;
             }
@@ -187,16 +212,23 @@ impl StarkVerifier {
                 let layer_size = lde_size >> fold_k;
                 let half = layer_size / 2;
 
+                if half == 0 || pos >= layer_size {
+                    return false;
+                }
                 let lo = pos % half;
                 let in_first_half = pos == lo;
 
                 let (ref op, ref op_pair) = qp.fri_openings[layer];
 
-                // Merkle proofs
-                if !verify_opening_ext(op, &proof.fri_commitments[fold_k]) {
-                    return false;
-                }
-                if !verify_opening_ext(op_pair, &proof.fri_commitments[fold_k]) {
+                // Merkle proofs, bound to the derived positions.
+                if !verify_opening_ext(op, lo, layer_size, &proof.fri_commitments[fold_k])
+                    || !verify_opening_ext(
+                        op_pair,
+                        lo + half,
+                        layer_size,
+                        &proof.fri_commitments[fold_k],
+                    )
+                {
                     return false;
                 }
 
@@ -222,7 +254,7 @@ impl StarkVerifier {
             }
 
             // 6g. The folded query position must land on the final layer.
-            if proof.fri_final_layer[pos] != prev_folded {
+            if pos >= proof.fri_final_layer.len() || proof.fri_final_layer[pos] != prev_folded {
                 return false;
             }
         }
@@ -231,13 +263,29 @@ impl StarkVerifier {
     }
 }
 
-fn verify_opening(opening: &MerkleOpening, root: &[u8]) -> bool {
+fn verify_opening(
+    opening: &MerkleOpening,
+    index: usize,
+    num_leaves: usize,
+    root: &[u8],
+) -> bool {
+    if opening.index != index {
+        return false;
+    }
     let leaf = [opening.salt.as_slice(), &opening.value.to_bytes()].concat();
-    verify_merkle_proof(leaf, &opening.proof, &root.to_vec())
+    verify_merkle_proof(&leaf, index, num_leaves, &opening.proof, root)
 }
 
-fn verify_opening_ext(opening: &MerkleOpeningExt, root: &[u8]) -> bool {
-    verify_merkle_proof(opening.value.to_bytes().to_vec(), &opening.proof, &root.to_vec())
+fn verify_opening_ext(
+    opening: &MerkleOpeningExt,
+    index: usize,
+    num_leaves: usize,
+    root: &[u8],
+) -> bool {
+    if opening.index != index {
+        return false;
+    }
+    verify_merkle_proof(&opening.value.to_bytes(), index, num_leaves, &opening.proof, root)
 }
 
 /// Merkle root of unsalted extension-field leaves; matches `build_merkle_tree_ext`.
@@ -247,14 +295,16 @@ fn merkle_root_of_ext(values: &[Ext]) -> Vec<u8> {
 }
 
 /// Derive the out-of-domain point in the extension field, matching the prover:
-/// reject only the (negligible) base-field case.
-fn derive_z_verifier(transcript: &mut FiatShamirTranscript) -> Ext {
-    loop {
+/// reject only the (negligible) base-field case. Bounded, so a malformed
+/// transcript cannot spin forever.
+fn derive_z_verifier(transcript: &mut FiatShamirTranscript) -> Option<Ext> {
+    for _ in 0..64 {
         let z = transcript.squeeze_ext_challenge();
         if !z.is_base() {
-            return z;
+            return Some(z);
         }
     }
+    None
 }
 
 #[cfg(test)]
@@ -355,6 +405,40 @@ mod tests {
             !verifier.verify(&proof),
             "Verifier should reject tampered FRI commitment"
         );
+    }
+
+    /// Malformed proofs must be rejected, not panic. Each of these reached an
+    /// `assert!` or an out-of-bounds index before the parameter validation and
+    /// the bounds checks were added.
+    #[test]
+    fn malformed_proofs_do_not_panic() {
+        for mutate in [
+            (|p: &mut StarkProof| p.trace_len = 0) as fn(&mut StarkProof),
+            |p| p.trace_len = 3,
+            |p| p.trace_len = 1 << 30,
+            |p| p.lde_size = 12345,
+            |p| p.fri_commitments.clear(),
+            |p| p.fri_final_layer.clear(),
+            |p| p.trace_commitment.clear(),
+            |p| {
+                for qp in p.query_proofs.iter_mut() {
+                    qp.fri_openings.clear();
+                }
+            },
+        ] {
+            let mut proof = make_valid_proof();
+            mutate(&mut proof);
+            assert!(!StarkVerifier.verify(&proof));
+        }
+    }
+
+    /// Openings are bound to the index the verifier derived, so a leaf cannot
+    /// be moved to another query slot.
+    #[test]
+    fn index_substitution_is_rejected() {
+        let mut proof = make_valid_proof();
+        proof.query_proofs[0].trace_opening = proof.query_proofs[1].trace_opening.clone();
+        assert!(!StarkVerifier.verify(&proof));
     }
 
     #[test]
