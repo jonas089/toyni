@@ -280,6 +280,20 @@ TOYNI-01 and TOYNI-06 patches in `REMEDIATION.md`.
 | TOYNI-03 | High | Open. This is not a verifier soundness break: the proof is valid for a statement that binds nothing. The auth engine does not use this AIR. |
 | TOYNI-06 | Medium | Fixed (queries sampled over the whole domain; the full test suite and all PoCs pass) |
 
+**Second re-audit (after TOYNI-06).** An independent review found no new issue in the TOYNI-06 change:
+- 38 honest proofs at `trace_len` 64, 128 and 256 verified, with queries in both halves and wrapped `g`/`g²` openings.
+- All 1,144 mutations were rejected.
+- A forged proof with one wrong row was rejected.
+
+It also refines TOYNI-05 (Medium, still open):
+- `MASK_DEGREE = 3·44 + 8 = 140` counts the three OOD values as 8 base equations, but they are 12.
+- The trace openings plus the OOD values therefore give up to 144 equations, against 142 unknowns: the 2 seeds and 140 mask
+  coefficients.
+- The seeds were recovered from those alone, without the DEEP pair values, in 12 of 20 proofs. The other 8 had repeated
+  opening indices and too few equations.
+- A zero-knowledge fix for the example must raise the mask to at least 144 coefficients plus a margin, besides randomizing
+  FRI. The auth engine's budget (`2·132 + 4`) is not affected.
+
 **Method.**
 - The Fibonacci verifier was reviewed line by line: parameter checks, transcript, OOD check, DEEP terms, FRI and openings.
 - The primitives shared with the auth engine (field, extension, Merkle, transcript, domain) were reviewed twice, independently;

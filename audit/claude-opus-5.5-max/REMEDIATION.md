@@ -61,7 +61,7 @@ conjectured bound and 66 under the proven one, which matches the README. `tests/
 | TOYNI-02 | High | Open in the library (`value` stays public). Closed at the auth engine's trust boundary (AUTH-02 patch). toyni's own verifier gets no forgery from it (REPORT). |
 | TOYNI-03 | High | Open. Binding a statement needs public inputs, which means changing the `verify` API. The auth engine does not use this AIR. |
 | TOYNI-04 | Medium | Fixed by the TOYNI-01 check |
-| TOYNI-05 | Medium | Open (the Fibonacci example is not zero-knowledge; `t05` still recovers the witness) |
+| TOYNI-05 | Medium | Open (the Fibonacci example is not zero-knowledge; `t05` still recovers the witness, and the 140-coefficient mask is already short of the 144 equations from trace openings and OOD values, see REPORT Section 7) |
 | TOYNI-06 | Medium | Fixed |
 | TOYNI-07 – TOYNI-11 | Low / Info | Open |
 
