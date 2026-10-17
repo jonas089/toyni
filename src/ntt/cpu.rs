@@ -129,25 +129,56 @@ use crate::babybear::BabyBear;
 
 const P: u32 = crate::babybear::BABYBEAR_PRIME;
 
-/// Forward NTT in place over BabyBear. Length must be a power of two.
+/// Forward NTT in place over BabyBear; same result as `ntt`. Length must be a power of two.
 pub fn ntt_babybear(values: &mut [BabyBear]) {
     let n = values.len();
     assert!(n.is_power_of_two(), "NTT size must be power of 2");
-    let raw: Vec<u32> = values.iter().map(|v| v.value).collect();
-    let out = ntt(raw, roots_of_unity(n as u32, P), P);
-    for (v, r) in values.iter_mut().zip(out) {
-        *v = BabyBear { value: r };
-    }
+    let roots: Vec<BabyBear> = roots_of_unity(n as u32, P).into_iter().map(|r| BabyBear { value: r }).collect();
+    ntt_in_place(values, &roots);
 }
 
-/// Inverse NTT in place over BabyBear. Length must be a power of two.
+/// Inverse NTT in place over BabyBear; same result as `intt`. Length must be a power of two.
 pub fn intt_babybear(values: &mut [BabyBear]) {
     let n = values.len();
     assert!(n.is_power_of_two(), "NTT size must be power of 2");
-    let raw: Vec<u32> = values.iter().map(|v| v.value).collect();
-    let out = intt(raw, roots_of_unity(n as u32, P), P);
-    for (v, r) in values.iter_mut().zip(out) {
-        *v = BabyBear { value: r };
+    let roots = roots_of_unity(n as u32, P);
+    let inv_roots: Vec<BabyBear> = (0..n).map(|i| BabyBear { value: roots[(n - i) % n] }).collect();
+    ntt_in_place(values, &inv_roots);
+    let n_inv = BabyBear::new(n as u64).inverse();
+    for v in values.iter_mut() {
+        *v = *v * n_inv;
+    }
+}
+
+/// Iterative radix-2 Cooley-Tukey: bit-reverse, then butterflies with w = roots[j * n / len].
+fn ntt_in_place(a: &mut [BabyBear], roots: &[BabyBear]) {
+    let n = a.len();
+    if n <= 1 {
+        return;
+    }
+    let log_n = n.trailing_zeros();
+    for i in 0..n {
+        let j = i.reverse_bits() >> (usize::BITS - log_n);
+        if i < j {
+            a.swap(i, j);
+        }
+    }
+    let mut twiddles = Vec::with_capacity(n / 2);
+    let mut len = 2;
+    while len <= n {
+        let half = len / 2;
+        let stride = n / len;
+        twiddles.clear();
+        twiddles.extend((0..half).map(|j| roots[j * stride]));
+        for block in a.chunks_mut(len) {
+            let (lo, hi) = block.split_at_mut(half);
+            for j in 0..half {
+                let b = hi[j] * twiddles[j];
+                hi[j] = lo[j] - b;
+                lo[j] = lo[j] + b;
+            }
+        }
+        len *= 2;
     }
 }
 
@@ -164,6 +195,25 @@ mod babybear_tests {
             ntt_babybear(&mut values);
             intt_babybear(&mut values);
             assert_eq!(original, values, "roundtrip failed for n={n}");
+        }
+    }
+
+    #[test]
+    fn babybear_matches_reference_ntt() {
+        for log_n in [0u32, 1, 2, 5, 10, 14] {
+            let n = 1usize << log_n;
+            let input: Vec<BabyBear> =
+                (0..n).map(|i| BabyBear::new((i as u64 * 2654435761) ^ 0x5bd1e995)).collect();
+            let raw: Vec<u32> = input.iter().map(|v| v.value).collect();
+            let roots = roots_of_unity(n as u32, P);
+
+            let mut fwd = input.clone();
+            ntt_babybear(&mut fwd);
+            assert_eq!(fwd.iter().map(|v| v.value).collect::<Vec<_>>(), ntt(raw.clone(), roots.clone(), P), "ntt n={n}");
+
+            let mut inv = input.clone();
+            intt_babybear(&mut inv);
+            assert_eq!(inv.iter().map(|v| v.value).collect::<Vec<_>>(), intt(raw, roots, P), "intt n={n}");
         }
     }
 

@@ -14,7 +14,7 @@
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::babybear::{BabyBear, BABYBEAR_PRIME};
+use crate::babybear::BabyBear;
 
 /// The binomial constant: `X^4 = W`.
 const W: u64 = 11;
@@ -119,12 +119,27 @@ impl Ext {
         result
     }
 
-    /// Multiplicative inverse via Fermat: `a^(p^4 - 2)`.
+    /// Inverse via the norm: a·a(-X) = b0 + b2·X^2, and (b0 + b2·X^2)(b0 - b2·X^2) =
+    /// b0^2 - W·b2^2 is in the base field, so one base inversion suffices.
     pub fn inverse(self) -> Self {
         assert!(!self.is_zero(), "Cannot invert zero");
-        let p = BABYBEAR_PRIME as u128;
-        let order = p * p * p * p; // p^4
-        self.pow_u128(order - 2)
+        let [a0, a1, a2, a3] = self.c;
+        let w = BabyBear::new(W);
+        let two = BabyBear::new(2);
+        // a·a(-X) = b0 + b2·X^2
+        let b0 = a0 * a0 + w * (a2 * a2) - two * w * (a1 * a3);
+        let b2 = two * (a0 * a2) - a1 * a1 - w * (a3 * a3);
+        let norm_inv = (b0 * b0 - w * (b2 * b2)).inverse();
+        // c = (b0 - b2·X^2) / norm
+        let c0 = b0 * norm_inv;
+        let c2 = -(b2 * norm_inv);
+        // a^-1 = a(-X) · c
+        Self { c: [
+            a0 * c0 + w * (a2 * c2),
+            -(a1 * c0 + w * (a3 * c2)),
+            a0 * c2 + a2 * c0,
+            -(a1 * c2 + a3 * c0),
+        ] }
     }
 
     /// Evaluate a base at an extension point.
@@ -269,6 +284,24 @@ mod tests {
             let b = Ext::random(&mut r);
             let c = Ext::random(&mut r);
             assert_eq!(a * (b + c), a * b + a * c);
+        }
+    }
+
+    #[test]
+    fn norm_inverse_matches_fermat() {
+        let mut r = rng();
+        let p = crate::babybear::BABYBEAR_PRIME as u128;
+        for _ in 0..200 {
+            let a = Ext::random(&mut r);
+            if a.is_zero() { continue; }
+            assert_eq!(a.inverse(), a.pow_u128(p * p * p * p - 2));
+        }
+        // Sparse elements exercise the zero-coefficient paths.
+        for i in 0..4 {
+            let mut c = [BabyBear::zero(); 4];
+            c[i] = BabyBear::new(5);
+            let a = Ext::new(c);
+            assert_eq!(a * a.inverse(), Ext::one());
         }
     }
 
