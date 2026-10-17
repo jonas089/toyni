@@ -269,7 +269,7 @@ cargo test                                                    # debug: wrap test
 ## 7. Re-audit after remediation (2026-10-17)
 
 **Scope.** Critical and High only: any way for a verifier to accept a false statement. The code is the audited code plus the
-TOYNI-01 patch in `REMEDIATION.md`.
+TOYNI-01 and TOYNI-06 patches in `REMEDIATION.md`.
 
 **Result: no new Critical or High findings.**
 
@@ -278,6 +278,7 @@ TOYNI-01 patch in `REMEDIATION.md`.
 | TOYNI-01 | Critical | Fixed (t01 rejected at `trace_len` 8 and 16) |
 | TOYNI-02 | High | Open in the library; closed at the auth engine's boundary (AUTH-02). toyni's own verifier still accepts values >= p. That has no impact while TOYNI-03 leaves the statement vacuous, so fix it before or together with TOYNI-03. |
 | TOYNI-03 | High | Open. This is not a verifier soundness break: the proof is valid for a statement that binds nothing. The auth engine does not use this AIR. |
+| TOYNI-06 | Medium | Fixed (queries sampled over the whole domain; the full test suite and all PoCs pass) |
 
 **Method.**
 - The Fibonacci verifier was reviewed line by line: parameter checks, transcript, OOD check, DEEP terms, FRI and openings.
