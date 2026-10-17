@@ -127,8 +127,7 @@ impl StarkVerifier {
         }
 
         // ── 4. Derive query indices ────────────────────────────────────
-        let first_layer_half = lde_size / 2;
-        let query_indices = transcript.squeeze_indices(NUM_QUERIES, first_layer_half);
+        let query_indices = transcript.squeeze_indices(NUM_QUERIES, lde_size);
 
         if proof.query_proofs.len() != NUM_QUERIES {
             return false;
@@ -169,7 +168,7 @@ impl StarkVerifier {
             if !verify_opening_ext(&qp.deep_opening, qi, lde_size, &proof.fri_commitments[0])
                 || !verify_opening_ext(
                     &qp.deep_opening_pair,
-                    qi + half0,
+                    qi ^ half0,
                     lde_size,
                     &proof.fri_commitments[0],
                 )
@@ -197,10 +196,14 @@ impl StarkVerifier {
                 return false;
             }
 
-            // 6e. First FRI fold: layer 0 → layer 1
-            let a0 = qp.deep_opening.value;
-            let b0 = qp.deep_opening_pair.value;
-            let x0_inv = shifted_elements[qi].inverse();
+            // 6e. First FRI fold: layer 0 → layer 1, with (a0, b0) at (lo0, lo0 + half0).
+            let lo0 = qi % half0;
+            let (a0, b0) = if qi == lo0 {
+                (qp.deep_opening.value, qp.deep_opening_pair.value)
+            } else {
+                (qp.deep_opening_pair.value, qp.deep_opening.value)
+            };
+            let x0_inv = shifted_elements[lo0].inverse();
 
             let mut prev_folded = {
                 let avg = (a0 + b0).mul_base(half_inv);
@@ -209,7 +212,7 @@ impl StarkVerifier {
             };
 
             // 6f. Intermediate FRI layers
-            let mut pos = qi;
+            let mut pos = lo0;
 
             for layer in 0..qp.fri_openings.len() {
                 let fold_k = layer + 1;

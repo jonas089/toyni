@@ -141,7 +141,7 @@ fn deep_forgery_is_rejected() {
     }
 
     let query_proofs = ts
-        .squeeze_indices(NUM_QUERIES, lde_size / 2)
+        .squeeze_indices(NUM_QUERIES, lde_size)
         .into_iter()
         .map(|qi| {
             let mut idx = qi;
@@ -158,7 +158,7 @@ fn deep_forgery_is_rejected() {
             QueryProof {
                 index: qi,
                 deep_opening: open_ext(&trees[0], &layers[0], qi),
-                deep_opening_pair: open_ext(&trees[0], &layers[0], qi + lde_size / 2),
+                deep_opening_pair: open_ext(&trees[0], &layers[0], qi ^ (lde_size / 2)),
                 trace_opening: open(&trace_tree, &trace_salts, &trace_lde, qi),
                 trace_opening_g: open(
                     &trace_tree,

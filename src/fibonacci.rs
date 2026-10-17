@@ -269,8 +269,7 @@ impl StarkProver {
         let fri_final_layer = current;
 
         // ── 7. Query phase ─────────────────────────────────────────────
-        let first_layer_half = fri_layers[0].len() / 2;
-        let query_indices = transcript.squeeze_indices(NUM_QUERIES, first_layer_half);
+        let query_indices = transcript.squeeze_indices(NUM_QUERIES, lde_size);
 
         let mut query_proofs = Vec::with_capacity(NUM_QUERIES);
 
@@ -285,10 +284,10 @@ impl StarkProver {
             // Quotient opening: Q(x_i).
             let quotient_opening = open_merkle(&quotient_tree, &q_evals, qi);
 
-            // DEEP layer (layer 0) openings: position qi and its pair qi + half.
+            // DEEP layer (layer 0) openings: position qi and its pair qi ^ half.
             let half0 = fri_layers[0].len() / 2;
             let deep_opening = open_merkle_ext(&fri_trees[0], &fri_layers[0], qi);
-            let deep_opening_pair = open_merkle_ext(&fri_trees[0], &fri_layers[0], qi + half0);
+            let deep_opening_pair = open_merkle_ext(&fri_trees[0], &fri_layers[0], qi ^ half0);
 
             // Intermediate FRI layers.
             let mut fri_openings = Vec::new();

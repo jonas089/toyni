@@ -75,7 +75,7 @@ pub fn finish(
     let (t_tree, t_salts, t_vals) = trace;
     let (q_tree, q_salts, q_vals) = quotient;
     let query_proofs = ts
-        .squeeze_indices(NUM_QUERIES, lde_size / 2)
+        .squeeze_indices(NUM_QUERIES, lde_size)
         .into_iter()
         .map(|qi| {
             let mut idx = qi;
@@ -89,7 +89,7 @@ pub fn finish(
             QueryProof {
                 index: qi,
                 deep_opening: open_ext(&trees[0], &layers[0], qi),
-                deep_opening_pair: open_ext(&trees[0], &layers[0], qi + lde_size / 2),
+                deep_opening_pair: open_ext(&trees[0], &layers[0], qi ^ (lde_size / 2)),
                 trace_opening: open(t_tree, t_salts, t_vals, qi),
                 trace_opening_g: open(t_tree, t_salts, t_vals, (qi + BLOWUP) % lde_size),
                 trace_opening_gg: open(t_tree, t_salts, t_vals, (qi + 2 * BLOWUP) % lde_size),

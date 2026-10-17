@@ -112,10 +112,10 @@ fn witness_is_recovered_from_one_proof() {
             row.push(op.value);
             base_rows.push(row);
         }
-        // DEEP pair value at x' = x_{qi + lde/2}:
+        // DEEP pair value at x' = x_{qi ^ lde/2}:
         // d (x'-z) + c0 t_z + c1 t_gz + c2 t_ggz + c3 q_z
         //   = T^(x')(c0 - c3 r) + T^(gx')(c1 - c3 r) + T^(g^2 x')(c2 + c3 r),  r = B(x')/Z_H(x').
-        let i = qp.index + lde / 2;
+        let i = qp.index ^ (lde / 2);
         let (x0, x1, x2) = (xs[i], xs[(i + BLOWUP) % lde], xs[(i + 2 * BLOWUP) % lde]);
         let b = (x0 - g.pow((n - 1) as u64)) * (x0 - g.pow((n - 2) as u64));
         let r = b * (x0.pow(n as u64) - BabyBear::one()).inverse();
