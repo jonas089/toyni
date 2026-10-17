@@ -90,6 +90,10 @@ impl StarkVerifier {
         // to be constant. This enforces the degree bound; fold-consistency alone
         // does not. D_BOUND = next_pow2(trace_len + MASK_DEGREE) covers masking.
         let fri_degree_bound = (trace_len + MASK_DEGREE).next_power_of_two();
+        // Rate <= 1/8 (trace_len >= 64): at 8 and 16 any trace passes (TOYNI-01).
+        if lde_size < 8 * fri_degree_bound {
+            return false;
+        }
         let final_layer_size = lde_size / fri_degree_bound;
         let expected_folds = (lde_size / final_layer_size).trailing_zeros() as usize;
         if proof.fri_commitments.len() != expected_folds + 1 {
