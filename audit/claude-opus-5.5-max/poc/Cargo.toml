@@ -1,0 +1,12 @@
+[package]
+name = "toyni-audit-poc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone workspace so the PoCs never become part of the audited build.
+[workspace]
+
+[dependencies]
+toyni = { path = "../../.." }
+rand = "0.8.5"
