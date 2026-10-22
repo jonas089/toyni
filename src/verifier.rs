@@ -1,10 +1,11 @@
 use crate::babybear::BabyBear;
 use crate::ext::Ext;
 use crate::math::domain::BabyBearDomain;
-use crate::merkle::{verify_merkle_proof, MerkleTree};
+use crate::merkle::verify_merkle_proof;
 use crate::fibonacci::{
-    deep_value, eval_boundary_1_ext, eval_boundary_2_ext, eval_fibonacci_constraint_ext,
-    MerkleOpening, MerkleOpeningExt, StarkProof, BLOWUP, COSET_SHIFT, MASK_DEGREE,
+    build_final_layer_tree, deep_value, eval_boundary_1_ext, eval_boundary_2_ext,
+    eval_fibonacci_constraint_ext, fri_pair_leaf, FriPairOpening, MerkleOpening, StarkProof,
+    BLOWUP, COSET_SHIFT, MASK_DEGREE,
     NUM_DEEP_TERMS, NUM_QUERIES,
 };
 use crate::transcript::FiatShamirTranscript;
@@ -111,7 +112,9 @@ impl StarkVerifier {
             return false;
         }
         // Final layer matches its commitment (binds all positions to the transcript).
-        if merkle_root_of_ext(&proof.fri_final_layer) != *proof.fri_commitments.last().unwrap() {
+        if build_final_layer_tree(&proof.fri_final_layer).root().unwrap()
+            != *proof.fri_commitments.last().unwrap()
+        {
             return false;
         }
 
@@ -126,7 +129,7 @@ impl StarkVerifier {
             transcript.absorb_commitment(&proof.fri_commitments[i]);
         }
 
-        // ── 4. Derive query indices ────────────────────────────────────
+        // ── 4b. Derive query indices ───────────────────────────────────
         let query_indices = transcript.squeeze_indices(NUM_QUERIES, lde_size);
 
         if proof.query_proofs.len() != NUM_QUERIES {
@@ -135,7 +138,6 @@ impl StarkVerifier {
 
         // ── 5. Shifted domain elements (for x-coordinate lookups) ──────
         let shifted_elements = shifted_domain.elements();
-        let half_inv = BabyBear::new(2).inverse();
 
         // ── 6. Verify each query ───────────────────────────────────────
         for (qi_idx, qp) in proof.query_proofs.iter().enumerate() {
@@ -143,9 +145,8 @@ impl StarkVerifier {
             if qp.index != qi {
                 return false;
             }
-            // The query must carry exactly the intermediate-layer openings the
-            // fixed fold schedule produces (layers 1..final, exclusive).
-            if qp.fri_openings.len() != expected_folds - 1 {
+            // One FRI pair per fold, layers 0 (DEEP) .. final, exclusive.
+            if qp.fri_pairs.len() != num_fri_folds {
                 return false;
             }
 
@@ -163,24 +164,10 @@ impl StarkVerifier {
                 return false;
             }
 
-            // 6b. DEEP layer (FRI layer 0): the position and its fold pair.
-            let half0 = lde_size / 2;
-            if !verify_opening_ext(&qp.deep_opening, qi, lde_size, &proof.fri_commitments[0])
-                || !verify_opening_ext(
-                    &qp.deep_opening_pair,
-                    qi ^ half0,
-                    lde_size,
-                    &proof.fri_commitments[0],
-                )
-            {
-                return false;
-            }
-
-            // 6c. DEEP consistency: the committed columns really do compose
-            //     into the committed DEEP layer, *term by term*.
-            let x_i = shifted_elements[qi];
-            let expected_deep = deep_value(
-                Ext::from(x_i),
+            // 6b. DEEP value at x, recomputed term by term from the openings.
+            //     It is the prediction for FRI layer 0.
+            let mut expected = deep_value(
+                Ext::from(shifted_elements[qi]),
                 z,
                 Ext::from(qp.trace_opening.value),
                 Ext::from(qp.trace_opening_g.value),
@@ -192,76 +179,29 @@ impl StarkVerifier {
                 proof.q_z,
                 &deep_coeffs,
             );
-            if qp.deep_opening.value != expected_deep {
-                return false;
-            }
 
-            // 6e. First FRI fold: layer 0 → layer 1, with (a0, b0) at (lo0, lo0 + half0).
-            let lo0 = qi % half0;
-            let (a0, b0) = if qi == lo0 {
-                (qp.deep_opening.value, qp.deep_opening_pair.value)
-            } else {
-                (qp.deep_opening_pair.value, qp.deep_opening.value)
-            };
-            let x0_inv = shifted_elements[lo0].inverse();
-
-            let mut prev_folded = {
-                let avg = (a0 + b0).mul_base(half_inv);
-                let diff = (a0 - b0).mul_base(half_inv);
-                avg + diff * fri_betas[0] * Ext::from(x0_inv)
-            };
-
-            // 6f. Intermediate FRI layers
-            let mut pos = lo0;
-
-            for layer in 0..qp.fri_openings.len() {
-                let fold_k = layer + 1;
-                let layer_size = lde_size >> fold_k;
-                let half = layer_size / 2;
-
-                if half == 0 || pos >= layer_size {
-                    return false;
-                }
+            // 6c. FRI: at layer k the opened value at `pos` must equal the
+            //     prediction (k = 0: DEEP check, k > 0: fold check); folding
+            //     the pair predicts layer k + 1 at `lo`.
+            let mut pos = qi;
+            for (k, pair) in qp.fri_pairs.iter().enumerate() {
+                let half = (lde_size >> k) / 2;
                 let lo = pos % half;
-                let in_first_half = pos == lo;
-
-                let (ref op, ref op_pair) = qp.fri_openings[layer];
-
-                // Merkle proofs, bound to the derived positions.
-                if !verify_opening_ext(op, lo, layer_size, &proof.fri_commitments[fold_k])
-                    || !verify_opening_ext(
-                        op_pair,
-                        lo + half,
-                        layer_size,
-                        &proof.fri_commitments[fold_k],
-                    )
-                {
+                if !verify_fri_pair(pair, lo, half, &proof.fri_commitments[k]) {
                     return false;
                 }
-
-                // prev_folded should match the value at position `pos`
-                if in_first_half {
-                    if op.value != prev_folded {
-                        return false;
-                    }
-                } else if op_pair.value != prev_folded {
+                let mine = if pos == lo { pair.values[0] } else { pair.values[1] };
+                if mine != expected {
                     return false;
                 }
-
-                // x-coordinate: xs_k[lo] = shifted_elements[lo]^{2^fold_k}
-                let x_inv = shifted_elements[lo].pow(1u64 << fold_k).inverse();
-
-                let a_l = op.value;
-                let b_l = op_pair.value;
-                let avg = (a_l + b_l).mul_base(half_inv);
-                let diff = (a_l - b_l).mul_base(half_inv);
-                prev_folded = avg + diff * fri_betas[fold_k] * Ext::from(x_inv);
-
+                // Index lo of layer k is the point y = shifted_elements[lo]^(2^k).
+                let y = shifted_elements[lo].pow(1u64 << k);
+                expected = fold(pair.values, fri_betas[k], y);
                 pos = lo;
             }
 
-            // 6g. The folded query position must land on the final layer.
-            if pos >= proof.fri_final_layer.len() || proof.fri_final_layer[pos] != prev_folded {
+            // 6d. The last prediction must land on the final layer.
+            if proof.fri_final_layer[pos] != expected {
                 return false;
             }
         }
@@ -283,8 +223,8 @@ fn verify_opening(
     verify_merkle_proof(&leaf, index, num_leaves, &opening.proof, root)
 }
 
-fn verify_opening_ext(
-    opening: &MerkleOpeningExt,
+fn verify_fri_pair(
+    opening: &FriPairOpening,
     index: usize,
     num_leaves: usize,
     root: &[u8],
@@ -292,13 +232,13 @@ fn verify_opening_ext(
     if opening.index != index {
         return false;
     }
-    verify_merkle_proof(&opening.value.to_bytes(), index, num_leaves, &opening.proof, root)
+    verify_merkle_proof(&fri_pair_leaf(&opening.values), index, num_leaves, &opening.proof, root)
 }
 
-/// Merkle root of unsalted extension-field leaves; matches `build_merkle_tree_ext`.
-fn merkle_root_of_ext(values: &[Ext]) -> Vec<u8> {
-    let leaves: Vec<Vec<u8>> = values.iter().map(|v| v.to_bytes().to_vec()).collect();
-    MerkleTree::new(leaves).root().unwrap()
+/// f'(y^2) = (f(y) + f(-y)) / 2 + beta * (f(y) - f(-y)) / (2y): even part + beta * odd part.
+fn fold([at_y, at_neg_y]: [Ext; 2], beta: Ext, y: BabyBear) -> Ext {
+    let half_inv = BabyBear::new(2).inverse();
+    (at_y + at_neg_y).mul_base(half_inv) + (at_y - at_neg_y).mul_base(half_inv) * beta * Ext::from(y.inverse())
 }
 
 /// Derive the out-of-domain point in the extension field, matching the prover:
@@ -429,7 +369,7 @@ mod tests {
             |p| p.trace_commitment.clear(),
             |p| {
                 for qp in p.query_proofs.iter_mut() {
-                    qp.fri_openings.clear();
+                    qp.fri_pairs.clear();
                 }
             },
         ] {

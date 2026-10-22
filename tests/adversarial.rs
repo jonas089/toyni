@@ -9,7 +9,7 @@ use rand::Rng;
 use toyni::babybear::BabyBear;
 use toyni::ext::Ext;
 use toyni::fibonacci::{
-    deep_value, MerkleOpening, MerkleOpeningExt, QueryProof, StarkProof, BLOWUP, COSET_SHIFT,
+    deep_value, MerkleOpening, FriPairOpening, QueryProof, StarkProof, BLOWUP, COSET_SHIFT,
     MASK_DEGREE, NUM_DEEP_TERMS, NUM_QUERIES,
 };
 use toyni::math::domain::BabyBearDomain;
@@ -123,7 +123,8 @@ fn deep_forgery_is_rejected() {
     let mut fold_xs = xs.clone();
     let final_size = lde_size / (trace_len + MASK_DEGREE).next_power_of_two();
     loop {
-        let tree = ext_tree(layers.last().unwrap());
+        let layer = layers.last().unwrap();
+        let tree = if layer.len() > final_size { pair_tree(layer) } else { ext_tree(layer) };
         let root = tree.root().unwrap();
         ts.absorb_commitment(&root);
         fri_commitments.push(root);
@@ -144,21 +145,15 @@ fn deep_forgery_is_rejected() {
         .squeeze_indices(NUM_QUERIES, lde_size)
         .into_iter()
         .map(|qi| {
-            let mut idx = qi;
-            let fri_openings = (1..layers.len() - 1)
-                .map(|l| {
-                    let half = layers[l].len() / 2;
-                    idx %= half;
-                    (
-                        open_ext(&trees[l], &layers[l], idx),
-                        open_ext(&trees[l], &layers[l], idx + half),
-                    )
+            let mut lo = qi;
+            let fri_pairs = (0..layers.len() - 1)
+                .map(|k| {
+                    lo %= layers[k].len() / 2;
+                    open_pair(&trees[k], &layers[k], lo)
                 })
                 .collect();
             QueryProof {
                 index: qi,
-                deep_opening: open_ext(&trees[0], &layers[0], qi),
-                deep_opening_pair: open_ext(&trees[0], &layers[0], qi ^ (lde_size / 2)),
                 trace_opening: open(&trace_tree, &trace_salts, &trace_lde, qi),
                 trace_opening_g: open(
                     &trace_tree,
@@ -173,7 +168,7 @@ fn deep_forgery_is_rejected() {
                     (qi + 2 * BLOWUP) % lde_size,
                 ),
                 quotient_opening: open(&q_tree, &q_salts, &q_evals, qi),
-                fri_openings,
+                fri_pairs,
             }
         })
         .collect();
@@ -216,6 +211,15 @@ fn ext_tree(evals: &[Ext]) -> MerkleTree {
     MerkleTree::new(evals.iter().map(|v| v.to_bytes().to_vec()).collect())
 }
 
+fn pair_tree(layer: &[Ext]) -> MerkleTree {
+    let half = layer.len() / 2;
+    MerkleTree::new(
+        (0..half)
+            .map(|j| [layer[j].to_bytes(), layer[j + half].to_bytes()].concat())
+            .collect(),
+    )
+}
+
 fn open(
     tree: &MerkleTree,
     salts: &[Vec<u8>],
@@ -230,11 +234,11 @@ fn open(
     }
 }
 
-fn open_ext(tree: &MerkleTree, evals: &[Ext], i: usize) -> MerkleOpeningExt {
-    MerkleOpeningExt {
-        index: i,
-        value: evals[i],
-        proof: tree.get_proof(i).unwrap(),
+fn open_pair(tree: &MerkleTree, layer: &[Ext], lo: usize) -> FriPairOpening {
+    FriPairOpening {
+        index: lo,
+        values: [layer[lo], layer[lo + layer.len() / 2]],
+        proof: tree.get_proof(lo).unwrap(),
     }
 }
 

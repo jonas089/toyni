@@ -125,7 +125,9 @@ fn witness_is_recovered_from_one_proof() {
         let (p0, p1, p2) = (powers(x0, unknowns), powers(x1, unknowns), powers(x2, unknowns));
         let coef: Vec<Ext> =
             (0..unknowns).map(|j| k0.mul_base(p0[j]) + k1.mul_base(p1[j]) + k2.mul_base(p2[j])).collect();
-        let rhs = qp.deep_opening_pair.value * (Ext::from(x0) - z)
+        // The DEEP pair leaf holds (d(x_lo), d(x_lo + lde/2)); i is the other half's slot.
+        let d_pair = qp.fri_pairs[0].values[usize::from(qp.index < lde / 2)];
+        let rhs = d_pair * (Ext::from(x0) - z)
             + c[0] * proof.t_z
             + c[1] * proof.t_gz
             + c[2] * proof.t_ggz

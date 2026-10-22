@@ -34,12 +34,13 @@ pub struct MerkleOpening {
     pub salt: Vec<u8>,
 }
 
-/// Opening of an extension-field committed position (DEEP / FRI layers). No
-/// salt: Ext values are 32 bytes of high entropy, so they are not brute-forceable.
+/// Opening of one FRI leaf (DEEP / FRI layers): the two values a fold combines,
+/// f(y) at `index` and f(-y) at `index + half`. No salt: Ext values are 16
+/// bytes of high entropy, so they are not brute-forceable.
 #[derive(Debug, Clone)]
-pub struct MerkleOpeningExt {
+pub struct FriPairOpening {
     pub index: usize,
-    pub value: Ext,
+    pub values: [Ext; 2],
     pub proof: MerkleProof,
 }
 
@@ -49,10 +50,6 @@ pub struct MerkleOpeningExt {
 pub struct QueryProof {
     /// The original query index into the first FRI layer (= DEEP evals).
     pub index: usize,
-
-    /// Openings into the DEEP layer (position and its pair).
-    pub deep_opening: MerkleOpeningExt,
-    pub deep_opening_pair: MerkleOpeningExt,
 
     /// Trace polynomial openings on the LDE domain:
     ///   trace_opening    → T(x_i)     at position qi
@@ -65,8 +62,8 @@ pub struct QueryProof {
     /// Quotient polynomial opening at the query position on the LDE domain.
     pub quotient_opening: MerkleOpening,
 
-    /// For each intermediate FRI layer: openings of a position and its pair.
-    pub fri_openings: Vec<(MerkleOpeningExt, MerkleOpeningExt)>,
+    /// `fri_pairs[k]` opens FRI layer k (layer 0 = DEEP), one per fold.
+    pub fri_pairs: Vec<FriPairOpening>,
 }
 
 /// A complete STARK proof that the verifier can check.
@@ -230,7 +227,7 @@ impl StarkProver {
 
         // Layer 0 = DEEP evaluations.
         fri_layers.push(d_evals.clone());
-        let tree0 = build_merkle_tree_ext(&d_evals);
+        let tree0 = build_fri_pair_tree(&d_evals);
         let root0 = tree0.root().unwrap();
         transcript.absorb_commitment(&root0);
         fri_commitments.push(root0);
@@ -257,7 +254,11 @@ impl StarkProver {
             }
 
             fri_layers.push(folded.clone());
-            let tree = build_merkle_tree_ext(&folded);
+            let tree = if folded.len() > final_layer_size {
+                build_fri_pair_tree(&folded)
+            } else {
+                build_final_layer_tree(&folded)
+            };
             let root = tree.root().unwrap();
             transcript.absorb_commitment(&root);
             fri_commitments.push(root);
@@ -284,32 +285,21 @@ impl StarkProver {
             // Quotient opening: Q(x_i).
             let quotient_opening = open_merkle(&quotient_tree, &q_evals, qi);
 
-            // DEEP layer (layer 0) openings: position qi and its pair qi ^ half.
-            let half0 = fri_layers[0].len() / 2;
-            let deep_opening = open_merkle_ext(&fri_trees[0], &fri_layers[0], qi);
-            let deep_opening_pair = open_merkle_ext(&fri_trees[0], &fri_layers[0], qi ^ half0);
-
-            // Intermediate FRI layers.
-            let mut fri_openings = Vec::new();
-            let mut idx = qi;
-            for layer_idx in 1..fri_layers.len() - 1 {
-                let half = fri_layers[layer_idx].len() / 2;
-                idx %= half;
-                let op = open_merkle_ext(&fri_trees[layer_idx], &fri_layers[layer_idx], idx);
-                let op_pair =
-                    open_merkle_ext(&fri_trees[layer_idx], &fri_layers[layer_idx], idx + half);
-                fri_openings.push((op, op_pair));
+            // FRI layers 0 (DEEP) .. final, exclusive: one pair leaf per fold.
+            let mut lo = qi;
+            let mut fri_pairs = Vec::with_capacity(fri_layers.len() - 1);
+            for k in 0..fri_layers.len() - 1 {
+                lo %= fri_layers[k].len() / 2;
+                fri_pairs.push(open_fri_pair(&fri_trees[k], &fri_layers[k], lo));
             }
 
             query_proofs.push(QueryProof {
                 index: qi,
-                deep_opening,
-                deep_opening_pair,
                 trace_opening,
                 trace_opening_g,
                 trace_opening_gg,
                 quotient_opening,
-                fri_openings,
+                fri_pairs,
             });
         }
 
@@ -372,11 +362,22 @@ fn build_merkle_tree(evals: &[BabyBear], rng: &mut impl Rng) -> SaltedTree {
     }
 }
 
-/// Build an extension-field Merkle tree (leaf = 32-byte Ext encoding). No salt:
-/// Ext values carry full entropy, and the final layer's root is recomputed
-/// directly by the verifier.
-fn build_merkle_tree_ext(evals: &[Ext]) -> MerkleTree {
-    MerkleTree::new(evals.iter().map(|v| v.to_bytes().to_vec()).collect())
+/// Leaf bytes of one FRI pair: the two 16-byte Ext encodings, f(y) then f(-y).
+pub(crate) fn fri_pair_leaf(values: &[Ext; 2]) -> Vec<u8> {
+    [values[0].to_bytes(), values[1].to_bytes()].concat()
+}
+
+/// Build a FRI layer's Merkle tree: len/2 leaves, leaf j = (layer[j], layer[j + len/2]),
+/// the values at y and -y. No salt: Ext values carry full entropy.
+pub(crate) fn build_fri_pair_tree(layer: &[Ext]) -> MerkleTree {
+    let half = layer.len() / 2;
+    MerkleTree::new((0..half).map(|j| fri_pair_leaf(&[layer[j], layer[j + half]])).collect())
+}
+
+/// The final FRI layer is sent whole and never opened, so it is committed one
+/// value per leaf; the verifier recomputes this root from the values.
+pub(crate) fn build_final_layer_tree(layer: &[Ext]) -> MerkleTree {
+    MerkleTree::new(layer.iter().map(|v| v.to_bytes().to_vec()).collect())
 }
 
 /// Open a salted base-field Merkle tree at a given index.
@@ -390,12 +391,12 @@ fn open_merkle(tree: &SaltedTree, evals: &[BabyBear], index: usize) -> MerkleOpe
     }
 }
 
-/// Open an extension-field Merkle tree at a given index.
-fn open_merkle_ext(tree: &MerkleTree, evals: &[Ext], index: usize) -> MerkleOpeningExt {
-    let proof = tree.get_proof(index).expect("Index out of bounds");
-    MerkleOpeningExt {
-        index,
-        value: evals[index],
+/// Open a FRI layer's pair leaf `lo`: the values at `lo` and `lo + len/2`.
+fn open_fri_pair(tree: &MerkleTree, layer: &[Ext], lo: usize) -> FriPairOpening {
+    let proof = tree.get_proof(lo).expect("Index out of bounds");
+    FriPairOpening {
+        index: lo,
+        values: [layer[lo], layer[lo + layer.len() / 2]],
         proof,
     }
 }
